@@ -163,7 +163,7 @@ fun MainAppContainer(
 
 /** Bottom rail: glyphs at rest; the selected one is lit with its name over an ember notch. */
 @Composable
-private fun BottomRail(selectedTab: NavTab, onTabSelected: (NavTab) -> Unit, modifier: Modifier = Modifier) {
+internal fun BottomRail(selectedTab: NavTab, onTabSelected: (NavTab) -> Unit, modifier: Modifier = Modifier) {
     ObsidianPanel(modifier.fillMaxWidth().height(60.dp)) {
         Row(
             Modifier.fillMaxSize().padding(horizontal = 8.dp),

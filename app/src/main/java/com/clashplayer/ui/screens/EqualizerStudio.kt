@@ -501,7 +501,7 @@ private fun AudioOutputTab(
             Spacer(modifier = Modifier.height(8.dp))
 
             val drivers = listOf(
-                Triple(AudioDriverType.BIT_PERFECT_DIRECT, "Bit-Perfect Direct (follow_sr)", "USB DAC at the track's exact sample rate (Android 14+). Disables all DSP."),
+                Triple(AudioDriverType.BIT_PERFECT_DIRECT, "Bit-Perfect Direct (follow_sr)", "Own USB driver: the DAC runs at each track's exact rate, any Android version. DSP is bypassed."),
                 Triple(AudioDriverType.AAUDIO, "AAudio High Performance", "Native low-latency hardware MMAP buffer"),
                 Triple(AudioDriverType.OPENSL_ES, "OpenSL ES", "Native legacy low-latency audio engine"),
                 Triple(AudioDriverType.AUDIOTRACK_FLOAT, "AudioTrack 32-bit Float", "Standard Android high-precision float streaming")
