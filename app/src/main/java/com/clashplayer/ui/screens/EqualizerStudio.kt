@@ -240,6 +240,98 @@ private fun ToneAndSpaceTab(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         item {
+            var clarityOn by remember { mutableStateOf(audioEngine.clarityProcessor.enabled) }
+            var clarityPresetIdx by remember { mutableIntStateOf(audioEngine.clarityProcessor.currentPreset.index) }
+            var clarityWet by remember { mutableStateOf(audioEngine.clarityProcessor.wetMix) }
+            var clarityWidth by remember { mutableStateOf(audioEngine.clarityProcessor.stereoWidth) }
+            var clarityExciter by remember { mutableStateOf(audioEngine.clarityProcessor.exciterAmount) }
+
+            Text(
+                text = "Studio Master Clarity & Separation",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = Ink
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ObsidianPanel(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Acoustic Clarity & Anti-Mud", style = MaterialTheme.typography.titleSmall, color = Ink)
+                            Text(
+                                "8-stage contouring, 130Hz mono-bass separation & tape exciter",
+                                style = HudStyle
+                            )
+                        }
+                        NotchToggle(clarityOn, {
+                            clarityOn = it
+                            audioEngine.setClarityEnabled(it)
+                        })
+                    }
+
+                    TickSelector(
+                        options = listOf("Reference", "Speaker", "Headphone", "DAC"),
+                        selectedIndex = clarityPresetIdx,
+                        onSelect = {
+                            clarityPresetIdx = it
+                            audioEngine.setClarityPreset(it)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        RotaryKnob(
+                            value = clarityWet * 100f,
+                            min = 0f, max = 100f,
+                            label = "Wet Mix",
+                            unit = "%",
+                            onValueChange = {
+                                val w = it / 100f
+                                clarityWet = w
+                                audioEngine.setClarityWetMix(w)
+                            }
+                        )
+
+                        RotaryKnob(
+                            value = clarityWidth,
+                            min = 1.0f, max = 1.6f,
+                            label = "Separation",
+                            unit = "x",
+                            onValueChange = {
+                                clarityWidth = it
+                                audioEngine.setClarityStereoWidth(it)
+                            }
+                        )
+
+                        RotaryKnob(
+                            value = clarityExciter * 100f,
+                            min = 0f, max = 35f,
+                            label = "Tape Sheen",
+                            unit = "%",
+                            onValueChange = {
+                                val ex = it / 100f
+                                clarityExciter = ex
+                                audioEngine.setClarityExciterAmount(ex)
+                            }
+                        )
+                    }
+
+                    Text(
+                        "24Hz HPF · 72Hz BASS · 280Hz ANTI-MUD · 3.4kHz DETAIL · 10.5kHz AIR · 130Hz MONO-BASS",
+                        style = HudStyle.copy(color = Phosphor),
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                }
+            }
+        }
+
+        item {
             Text(
                 text = "Tone Controls",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),

@@ -71,6 +71,7 @@ class AudioEngine(
     private val bassFilter = BiquadFilter(sampleRate)
     private val trebleFilter = BiquadFilter(sampleRate)
 
+    val clarityProcessor = ClarityProcessor(sampleRate)
     val stereoProcessor = StereoProcessor()
     val reverbProcessor = ReverbProcessor(sampleRate)
     val limiterProcessor = LimiterProcessor(sampleRate)
@@ -86,6 +87,10 @@ class AudioEngine(
     @Volatile var smoothGains = true
     // Largest boost of the current EQ/tone curve, refreshed with the coefficients
     private var eqPeakDb = 0f
+
+    // Pre-allocated processing scratch buffers (zero GC allocation in audio thread)
+    private val stereoTemp = FloatArray(2)
+    private val clarityTemp = FloatArray(2)
 
     // Play/pause/seek fade envelope, applied after the master gain
     @Volatile private var fadeLevel = 1f
@@ -114,6 +119,7 @@ class AudioEngine(
             com.clashplayer.diagnostics.DiagnosticsManager.audio("AudioEngine", "DSP pipeline clock switched to ${newRate}Hz")
             bassFilter.updateSampleRate(newRate)
             trebleFilter.updateSampleRate(newRate)
+            clarityProcessor.updateSampleRate(newRate)
             graphicFilters.forEach { it.updateSampleRate(newRate) }
             parametricFilters.forEach { it.updateSampleRate(newRate) }
             reverbProcessor.updateSampleRate(newRate)
@@ -289,7 +295,7 @@ class AudioEngine(
         var totalMasterGain = startGain
         currentMasterGain = targetGain
 
-        val stereoTemp = FloatArray(2)
+        val clarityOn = clarityProcessor.enabled || clarityProcessor.hasActiveRamp()
 
         var i = offset
         val end = offset + sampleCount
@@ -301,6 +307,13 @@ class AudioEngine(
             val g = totalMasterGain * fadeLevel
             var left = buffer[i] * g
             var right = buffer[i + 1] * g
+
+            // Studio Master Clarity & Separation (8-stage acoustic contouring, 130Hz mono-bass, tape harmonic exciter)
+            if (clarityOn) {
+                clarityProcessor.process(left, right, clarityTemp)
+                left = clarityTemp[0]
+                right = clarityTemp[1]
+            }
 
             // Apply Tone Controls (Bass / Treble)
             if (toneEnabled && eqAllowed) {
@@ -361,7 +374,31 @@ class AudioEngine(
             i += 2
         }
 
+        if (clarityOn) {
+            clarityProcessor.settle()
+        }
+
         updateFftAndWaveform()
+    }
+
+    fun setClarityEnabled(enabled: Boolean) {
+        clarityProcessor.enabled = enabled
+    }
+
+    fun setClarityPreset(presetIndex: Int) {
+        clarityProcessor.setPreset(presetIndex)
+    }
+
+    fun setClarityWetMix(wet: Float) {
+        clarityProcessor.wetMix = wet.coerceIn(0f, 1f)
+    }
+
+    fun setClarityStereoWidth(width: Float) {
+        clarityProcessor.stereoWidth = width.coerceIn(0.5f, 2.0f)
+    }
+
+    fun setClarityExciterAmount(amount: Float) {
+        clarityProcessor.exciterAmount = amount.coerceIn(0f, 0.5f)
     }
 
     /** Overall loudness of the visualizer spectrum, 0..1, for ambient effects. Allocation-free. */

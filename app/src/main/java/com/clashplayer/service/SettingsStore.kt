@@ -40,6 +40,13 @@ class SettingsStore(context: Context) {
             put("toneOn", e.toneEnabled); put("eqOn", e.equalizerEnabled); put("smooth", e.smoothGains)
             put("width", e.stereoProcessor.stereoWidth.toDouble()); put("balance", e.stereoProcessor.balance.toDouble())
             put("mono", e.stereoProcessor.forceMono)
+            put("clarity", JSONArray(listOf(
+                e.clarityProcessor.enabled,
+                e.clarityProcessor.wetMix.toDouble(),
+                e.clarityProcessor.stereoWidth.toDouble(),
+                e.clarityProcessor.exciterAmount.toDouble(),
+                e.clarityProcessor.currentPreset.index
+            )))
             put("reverb", JSONArray(listOf(e.reverbProcessor.enabled, e.reverbProcessor.roomSize, e.reverbProcessor.damping, e.reverbProcessor.wetMix)))
             put("comp", JSONArray(listOf(e.compressor.enabled, e.compressor.thresholdDb, e.compressor.ratio, e.compressor.makeupDb)))
             put("limiter", e.limiterProcessor.enabled)
@@ -74,6 +81,13 @@ class SettingsStore(context: Context) {
             e.stereoProcessor.stereoWidth = j.optDouble("width", 1.0).toFloat()
             e.stereoProcessor.balance = j.optDouble("balance", 0.0).toFloat()
             e.stereoProcessor.forceMono = j.optBoolean("mono")
+            j.optJSONArray("clarity")?.let { c ->
+                e.clarityProcessor.enabled = c.optBoolean(0, true)
+                e.clarityProcessor.wetMix = c.optDouble(1, 1.0).toFloat()
+                e.clarityProcessor.stereoWidth = c.optDouble(2, 1.25).toFloat()
+                e.clarityProcessor.exciterAmount = c.optDouble(3, 0.18).toFloat()
+                e.clarityProcessor.setPreset(c.optInt(4, 0))
+            }
             j.optJSONArray("reverb")?.let { r ->
                 e.reverbProcessor.enabled = r.getBoolean(0); e.reverbProcessor.roomSize = r.getDouble(1).toFloat()
                 e.reverbProcessor.damping = r.getDouble(2).toFloat(); e.reverbProcessor.wetMix = r.getDouble(3).toFloat()
