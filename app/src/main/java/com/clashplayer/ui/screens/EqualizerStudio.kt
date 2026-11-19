@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -99,6 +100,7 @@ fun EqualizerStudio(
     var selectedTab by remember { mutableIntStateOf(0) }
     var autoEqQuery by remember { mutableStateOf("") }
     var dvcEnabled by remember { mutableStateOf(audioEngine.dvcEnabled) }
+    var showDiagnosticsSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -119,6 +121,8 @@ fun EqualizerStudio(
                 Text("Studio", style = MaterialTheme.typography.headlineLarge, color = Ink)
                 Text("64-BIT DSP  ·  ${eqState.bands.size} BANDS  ·  ${if (eqState.enabled) "ENGAGED" else "BYPASSED"}", style = HudStyle)
             }
+            GlyphButton(Icons.Default.BugReport, "Diagnostics & Logs", { showDiagnosticsSheet = true }, size = 40.dp)
+            Spacer(modifier = Modifier.width(6.dp))
             NotchToggle(eqState.enabled, { audioEngine.setEqualizerEnabled(it) })
         }
 
@@ -155,8 +159,23 @@ fun EqualizerStudio(
                 currentDriver = currentDriver,
                 isDvcActive = dvcEnabled,
                 onToggleDvc = { dvcEnabled = it; audioEngine.dvcEnabled = it },
-                onDriverSelected = onDriverSelected
+                onDriverSelected = onDriverSelected,
+                onOpenDiagnostics = { showDiagnosticsSheet = true }
             )
+        }
+    }
+
+    if (showDiagnosticsSheet) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showDiagnosticsSheet = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = Color.Black
+            ) {
+                DiagnosticsSheet(onDismiss = { showDiagnosticsSheet = false })
+            }
         }
     }
 }
@@ -461,7 +480,8 @@ private fun AudioOutputTab(
     currentDriver: AudioDriverType,
     isDvcActive: Boolean,
     onToggleDvc: (Boolean) -> Unit,
-    onDriverSelected: (AudioDriverType) -> Unit
+    onDriverSelected: (AudioDriverType) -> Unit,
+    onOpenDiagnostics: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -545,6 +565,48 @@ private fun AudioOutputTab(
                             Icon(Icons.Default.Check, contentDescription = "Active", tint = Phosphor)
                         }
                     }
+                }
+            }
+        }
+
+        item {
+            Text(
+                text = "Diagnostics & Crash Logs",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = Ink
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            ObsidianPanel(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenDiagnostics)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Export Logs & Bug Reports",
+                            color = Phosphor,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "View audio pipeline logs, buffer underruns, fatal crash reports, and export diagnostics.",
+                            color = InkDim,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.BugReport,
+                        contentDescription = "Diagnostics",
+                        tint = Phosphor,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
         }

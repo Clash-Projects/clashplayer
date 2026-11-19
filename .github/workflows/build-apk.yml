@@ -1,29 +1,59 @@
-name: Build APK
+name: Build ClashPlayer APK
 
 on:
   push:
+    branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
+    name: Build & Package ClashPlayer APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
+      - name: Build ClashPlayer APK
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleDebug --stacktrace
+          
+          # Find output apk and copy as direct clashplayer.apk
+          APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          echo "Found APK: $APK_FILE"
+          cp "$APK_FILE" clashplayer.apk
+          cp "$APK_FILE" clashplayer-debug.apk
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload ClashPlayer APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: clashplayer-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: clashplayer
+          path: clashplayer.apk
           if-no-files-found: error
+
+      - name: Publish Direct APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_TAG="latest"
+          git tag -f "$RELEASE_TAG" HEAD
+          git push -f origin "$RELEASE_TAG" || true
+
+          gh release create "$RELEASE_TAG" clashplayer.apk clashplayer-debug.apk \
+            --title "ClashPlayer Latest Build" \
+            --notes "Direct downloadable APK for ClashPlayer. Download directly without unzipping." \
+            --clobber || gh release upload "$RELEASE_TAG" clashplayer.apk clashplayer-debug.apk --clobber

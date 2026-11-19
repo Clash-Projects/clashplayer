@@ -126,9 +126,11 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         _currentPositionMs.value = 0L
 
         val dec = try {
+            com.clashplayer.diagnostics.DiagnosticsManager.i("Playback", "Loading track: ${track.title} [${track.artist}]")
             openDecoder(track.uri)
         } catch (e: Exception) {
             android.util.Log.e(TAG, "Cannot decode ${track.uri}", e)
+            com.clashplayer.diagnostics.DiagnosticsManager.e("Playback", "Cannot decode ${track.uri}: ${e.message}", e)
             _isPlaying.value = false
             return
         }
@@ -431,6 +433,8 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     /** Reopens the output so the new driver (e.g. bit-perfect USB) takes effect on the current track. */
     fun switchAudioDriver(driver: AudioDriverType) {
+        com.clashplayer.diagnostics.DiagnosticsManager.activeDriverName = driver.name
+        com.clashplayer.diagnostics.DiagnosticsManager.audio("Playback", "Output driver switched to ${driver.name}")
         outputManager.selectDriver(driver)
         reopenOutput()
     }
@@ -569,7 +573,9 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                 }
                 nativeOut?.let { out ->
                     return try { out.write(data, count); true } catch (e: java.io.IOException) {
-                        android.util.Log.w(TAG, "Native output failed", e); false
+                        android.util.Log.w(TAG, "Native output failed", e)
+                        com.clashplayer.diagnostics.DiagnosticsManager.w("Playback", "Native output write failed: ${e.message}", e)
+                        false
                     }
                 }
                 val usb = usbOutput
@@ -586,6 +592,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                     } catch (e: java.io.IOException) {
                         // DAC unplugged or stalled: reopen on whatever output is left, from outside this job
                         android.util.Log.w(TAG, "USB output failed", e)
+                        com.clashplayer.diagnostics.DiagnosticsManager.w("Playback", "USB direct write failed: ${e.message}", e)
                         outputManager.usbDirectSuspended = true
                         serviceScope.launch(Dispatchers.Main) { reopenOutput() }
                         false
@@ -597,6 +604,13 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                 } else {
                     packPcm(data, count, AudioOutputManager.precisionBits(outputEncoding), pcmBuffer)
                     audioTrack?.write(pcmBuffer, pcmBuffer.remaining(), AudioTrack.WRITE_BLOCKING)
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                    audioTrack?.underrunCount?.let { underruns ->
+                        if (underruns > 0) {
+                            com.clashplayer.diagnostics.DiagnosticsManager.underrunCount = underruns.toLong()
+                        }
+                    }
                 }
                 return true
             }

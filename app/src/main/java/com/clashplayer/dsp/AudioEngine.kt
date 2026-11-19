@@ -110,6 +110,8 @@ class AudioEngine(
     fun updateSampleRate(newRate: Int) {
         if (sampleRate != newRate && newRate > 0) {
             sampleRate = newRate
+            com.clashplayer.diagnostics.DiagnosticsManager.activeSampleRate = newRate
+            com.clashplayer.diagnostics.DiagnosticsManager.audio("AudioEngine", "DSP pipeline clock switched to ${newRate}Hz")
             bassFilter.updateSampleRate(newRate)
             trebleFilter.updateSampleRate(newRate)
             graphicFilters.forEach { it.updateSampleRate(newRate) }
