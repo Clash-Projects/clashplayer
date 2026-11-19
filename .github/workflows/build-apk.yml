@@ -46,14 +46,13 @@ jobs:
           if-no-files-found: error
 
       - name: Publish Direct APK to GitHub Release
+        uses: softprops/action-gh-release@v2
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RELEASE_TAG="latest"
-          git tag -f "$RELEASE_TAG" HEAD
-          git push -f origin "$RELEASE_TAG" || true
-
-          gh release create "$RELEASE_TAG" clashplayer.apk clashplayer-debug.apk \
-            --title "ClashPlayer Latest Build" \
-            --notes "Direct downloadable APK for ClashPlayer. Download directly without unzipping." \
-            --clobber || gh release upload "$RELEASE_TAG" clashplayer.apk clashplayer-debug.apk --clobber
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: latest
+          name: "ClashPlayer Latest Build"
+          body: "Direct downloadable APK for ClashPlayer. Download directly without unzipping."
+          files: |
+            clashplayer.apk
+            clashplayer-debug.apk
