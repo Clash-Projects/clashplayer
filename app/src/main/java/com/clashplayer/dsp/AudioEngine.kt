@@ -75,6 +75,7 @@ class AudioEngine(
     val stereoProcessor = StereoProcessor()
     val binauralSpatializer = BinauralSpatializer(sampleRate)
     val fidelityAnalyzer = FidelityAnalyzer(sampleRate)
+    val audioXRayAnalyzer = AudioXRayAnalyzer()
     val reverbProcessor = ReverbProcessor(sampleRate)
     val limiterProcessor = LimiterProcessor(sampleRate)
     val compressor = CompressorProcessor(sampleRate)
@@ -283,6 +284,7 @@ class AudioEngine(
                 updateFftAndWaveform()
             }
             fidelityAnalyzer.feed(buffer, offset, sampleCount)
+            audioXRayAnalyzer.feed(buffer, offset, sampleCount)
             return
         }
         if (filtersDirty) {
@@ -392,6 +394,7 @@ class AudioEngine(
 
         updateFftAndWaveform()
         fidelityAnalyzer.feed(buffer, offset, sampleCount)
+        audioXRayAnalyzer.feed(buffer, offset, sampleCount)
     }
 
     fun setBinauralEnabled(enabled: Boolean) {

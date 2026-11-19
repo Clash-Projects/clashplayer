@@ -784,6 +784,8 @@ private fun AudioOutputTab(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(170.dp))
         }
     }
 }

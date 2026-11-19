@@ -58,6 +58,7 @@ fun VisualizerScreen(
 
     var visualMode by remember { mutableStateOf(VisualizerMode.SPECTRUM_BARS) }
     var colorTheme by remember { mutableStateOf(0) }
+    var isMidSide by remember { mutableStateOf(false) }
 
     val (accent, secondary) = when (colorTheme) {
         0 -> Phosphor to Ember
@@ -77,6 +78,7 @@ fun VisualizerScreen(
             mode = visualMode,
             accentColor = accent,
             secondaryColor = secondary,
+            isMidSide = isMidSide,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(bottom = 120.dp, top = 80.dp)
@@ -121,10 +123,19 @@ fun VisualizerScreen(
                 .padding(horizontal = 20.dp, vertical = 24.dp)
                 .align(Alignment.BottomCenter)
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val modes = listOf(VisualizerMode.SPECTRUM_BARS, VisualizerMode.OSCILLOSCOPE, VisualizerMode.CIRCULAR_AURORA, VisualizerMode.STFT_SPECTROGRAM)
                 TickSelector(listOf("Bars", "Waveform", "Aurora", "STFT Spectrogram"), modes.indexOf(visualMode), { visualMode = modes[it] })
-                TickSelector(listOf("Phosphor", "Ember", "Signal"), colorTheme, { colorTheme = it })
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        TickSelector(listOf("Phosphor", "Ember", "Signal"), colorTheme, { colorTheme = it })
+                    }
+                    if (visualMode == VisualizerMode.STFT_SPECTROGRAM) {
+                        Box(Modifier.weight(1f)) {
+                            TickSelector(listOf("Stereo L/R", "Mid/Side (M/S)"), if (isMidSide) 1 else 0, { isMidSide = (it == 1) })
+                        }
+                    }
+                }
             }
         }
     }

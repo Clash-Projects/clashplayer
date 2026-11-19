@@ -41,7 +41,8 @@ fun AudioSpectrumView(
     modifier: Modifier = Modifier,
     barCount: Int = 64,
     accentColor: Color = Phosphor,
-    secondaryColor: Color = Ember
+    secondaryColor: Color = Ember,
+    isMidSide: Boolean = false
 ) {
     val peakDecay = remember { FloatArray(barCount) { 0f } }
 
@@ -175,6 +176,7 @@ fun AudioSpectrumView(
                         val cellColor = when {
                             mag < 0.08f -> Color(0xFF06080C)
                             mag < 0.25f -> Color(0xFF0A2239)
+                            isMidSide -> if (r % 2 == 0) accentColor.copy(alpha = 0.5f + mag * 0.5f) else secondaryColor.copy(alpha = 0.5f + mag * 0.5f)
                             mag < 0.50f -> accentColor.copy(alpha = 0.5f + mag)
                             mag < 0.75f -> secondaryColor.copy(alpha = 0.7f + 0.3f * mag)
                             else -> Color(0xFFFFFFFF)

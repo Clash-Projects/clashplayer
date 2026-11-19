@@ -1,5 +1,6 @@
 package com.clashplayer.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.clashplayer.dsp.AudioEngine
@@ -49,6 +52,7 @@ import com.clashplayer.ui.theme.Ember
 import com.clashplayer.ui.theme.HudStyle
 import com.clashplayer.ui.theme.Ink
 import com.clashplayer.ui.theme.InkMuted
+import com.clashplayer.ui.theme.Obsidian
 import com.clashplayer.ui.theme.ObsidianRaised
 import com.clashplayer.ui.theme.rememberArtworkColors
 import java.util.Locale
@@ -127,23 +131,38 @@ fun MainAppContainer(
             )
         }
 
-        Column(
+        Box(
             Modifier
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Obsidian.copy(alpha = 0.85f),
+                            Obsidian
+                        )
+                    )
+                )
         ) {
-            MiniPlayerBar(
-                track = currentTrack,
-                isPlaying = isPlaying,
-                progressFraction = progressFraction,
-                driverType = driverType,
-                onPlayPause = { if (isPlaying) service.pause() else service.resume() },
-                onSkipNext = { service.next() },
-                onClick = { isNowPlayingExpanded = true },
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            BottomRail(selectedTab, { selectedTab = it })
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                MiniPlayerBar(
+                    track = currentTrack,
+                    isPlaying = isPlaying,
+                    progressFraction = progressFraction,
+                    driverType = driverType,
+                    onPlayPause = { if (isPlaying) service.pause() else service.resume() },
+                    onSkipNext = { service.next() },
+                    onClick = { isNowPlayingExpanded = true },
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                BottomRail(selectedTab, { selectedTab = it })
+            }
         }
 
         NowPlayingSheet(

@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -172,9 +174,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPlatter(colors:
     drawCircle(Color(0xFF07080B), r * 0.035f, c)
 }
 
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-
 /**
  * The format badge: a status LED (phosphor when bit-perfect, ember when the signal is processed) and the stream's
  * format. Tapping it opens the live DAC clock monitor and Live Signal Path Inspector.
@@ -202,6 +201,17 @@ fun FormatHud(
             Spacer(Modifier.width(8.dp))
             Text(snapshot.source.uppercase(Locale.US), style = HudStyle.copy(color = Ink))
             Text("  ·  ${snapshot.transport.uppercase(Locale.US)}", style = HudStyle)
+            if (snapshot.bitPerfect) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color(0xFF2E240E))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text("BIT·XACT", style = HudStyle.copy(color = Color(0xFFFFD700)))
+                }
+            }
             Text(if (open) "  ▴" else "  ▾", style = HudStyle.copy(color = InkMuted))
         }
         AnimatedVisibility(open, enter = expandVertically(spring(0.8f, 380f)) + fadeIn(), exit = shrinkVertically(spring(0.9f, 500f)) + fadeOut()) {
@@ -264,7 +274,6 @@ private fun ClockMonitor(
                 ) {
                     Text("INSPECT LIVE SIGNAL PATH", style = HudStyle.copy(color = Phosphor))
                 }
-            }
             }
             Spacer(Modifier.height(12.dp))
             // Drift trace: drag across it to read any moment of the last 16 s

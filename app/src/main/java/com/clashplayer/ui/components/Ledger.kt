@@ -117,9 +117,42 @@ fun LedgerRow(index: Int, track: Track, isCurrent: Boolean, isPlaying: Boolean, 
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(track.title, style = MaterialTheme.typography.titleMedium, color = if (isCurrent) Phosphor else Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(track.artist, style = MaterialTheme.typography.bodySmall, color = InkDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QualityChip(track)
+                Spacer(Modifier.width(6.dp))
+                Text(track.artist, style = MaterialTheme.typography.bodySmall, color = InkDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         Text(formatMs(track.durationMs), style = HudStyle.copy(color = if (isCurrent) Ember else InkMuted))
+    }
+}
+
+/**
+ * Audiophile Track Quality Chip (reverse-engineered from Resonada catalog view).
+ * Distinguishes true Hi-Res (24/96, 24/192), DSD/SACD, DTS-HD, and Lossless Redbook.
+ */
+@Composable
+fun QualityChip(track: Track, modifier: Modifier = Modifier) {
+    val fmt = track.format.uppercase(Locale.US)
+    val rate = track.sampleRate
+    val bits = track.bitDepth
+    val (label, bg, fg) = when {
+        fmt.contains("DSD") || fmt.contains("SACD") -> Triple("DSD", Color(0xFF2E240E), Color(0xFFFFD700))
+        fmt.contains("DTS") -> Triple("DTS-HD", Color(0xFF261833), Color(0xFFBA68C8))
+        bits >= 24 && rate >= 88200 -> Triple("${bits}·${rate / 1000}", Color(0xFF2E240E), Color(0xFFFFD700))
+        bits >= 24 -> Triple("${bits}-BIT", Color(0xFF142B28), Phosphor)
+        fmt in listOf("FLAC", "ALAC", "WAV", "AIFF", "APE", "WV") -> Triple("LOSSLESS", Color(0xFF12201D), Phosphor.copy(alpha = 0.85f))
+        track.bitrateKbps >= 300 -> Triple("320k", Color(0xFF1C1E26), InkMuted)
+        else -> Triple(fmt, Color(0xFF1C1E26), InkMuted)
+    }
+
+    Box(
+        modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(bg)
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+        Text(label, style = HudStyle.copy(fontSize = 9.sp, color = fg))
     }
 }
 

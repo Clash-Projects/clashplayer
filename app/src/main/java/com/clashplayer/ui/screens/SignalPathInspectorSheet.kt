@@ -130,6 +130,65 @@ fun SignalPathInspectorSheet(
 
                 Spacer(Modifier.height(16.dp))
 
+                // Audiophile Score & Fix My Sound Banner
+                val fidelityMetrics by audioEngine.fidelityAnalyzer.metricsFlow.collectAsState()
+                val xrayMetrics by audioEngine.audioXRayAnalyzer.metrics.collectAsState()
+
+                val healthScore = if (clock.bitPerfect) {
+                    100
+                } else if (fidelityMetrics.trueClippingCount > 0 || fidelityMetrics.truePeakDb > 0.0f) {
+                    75
+                } else if (audioEngine.limiterProcessor.interSampleHeadroom) {
+                    98
+                } else {
+                    90
+                }
+
+                ObsidianPanel(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "$healthScore/100",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        color = if (healthScore >= 95) Phosphor else if (healthScore >= 85) Ember else Color(0xFFFF5252)
+                                    )
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("AUDIOPHILE SCORE", style = HudStyle.copy(color = InkDim))
+                            }
+                            Text(
+                                if (healthScore == 100) "Bit-Exact Lossless · Zero Alteration" else if (healthScore >= 90) "Calibrated Studio DSP · Clean Headroom" else "Inter-Sample Distortion Detected",
+                                style = MaterialTheme.typography.bodySmall.copy(color = Ink)
+                            )
+                        }
+
+                        if (healthScore < 100) {
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Phosphor.copy(alpha = 0.2f))
+                                    .clickable {
+                                        settings.interSampleHeadroom = true
+                                        audioEngine.setInterSampleHeadroomEnabled(true)
+                                        settings.bitXactMode = true
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text("FIX MY SOUND", style = HudStyle.copy(color = Phosphor))
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
                 // Scrollable Signal Chain Flow
                 Column(
                     modifier = Modifier
@@ -154,9 +213,26 @@ fun SignalPathInspectorSheet(
 
                     PathArrow(label = "Bit-Exact Direct Stream")
 
-                    // STAGE 2: DECODER
+                    // STAGE 2: AUDIO X-RAY (REAL PCM BIT DEPTH)
                     SignalStageCard(
                         stageNumber = 2,
+                        stageTitle = "AUDIO X-RAY (REAL PCM BIT DEPTH)",
+                        statusText = if (xrayMetrics.isPadded16Bit) "PADDED 16-BIT" else "TRUE ${xrayMetrics.effectiveBitDepth}-BIT",
+                        isLossless = !xrayMetrics.isPadded16Bit,
+                        details = listOf(
+                            "Effective Bit Depth" to "${xrayMetrics.effectiveBitDepth}-bit (${if (xrayMetrics.isPadded16Bit) "Bottom 8 bits dead / upsampled" else "Full dynamic resolution"})",
+                            "Theoretical SNR" to "${xrayMetrics.theoreticalSnrDb.toInt()} dBFS",
+                            "Dynamic Crest Factor" to String.format(Locale.US, "%.1f dB", xrayMetrics.crestFactorDb),
+                            "DC Offset" to String.format(Locale.US, "%+.4f%%", xrayMetrics.dcOffsetPercent)
+                        ),
+                        bitGrid = xrayMetrics.bitGrid
+                    )
+
+                    PathArrow(label = "Native Bitstream Parser")
+
+                    // STAGE 3: DECODER
+                    SignalStageCard(
+                        stageNumber = 3,
                         stageTitle = "NATIVE LOSSLESS DECODER",
                         statusText = "BIT-EXACT",
                         isLossless = true,
@@ -169,10 +245,10 @@ fun SignalPathInspectorSheet(
 
                     PathArrow(label = if (clock.bitPerfect) "Bit-Xact Bypassed" else "DSP Processing Pipeline")
 
-                    // STAGE 3: DSP & SPATIAL CHAIN
+                    // STAGE 4: DSP & SPATIAL CHAIN
                     val isDspActive = !clock.bitPerfect
                     SignalStageCard(
-                        stageNumber = 3,
+                        stageNumber = 4,
                         stageTitle = "DSP & SPATIAL PROCESSING",
                         statusText = if (clock.bitPerfect) "BIT-XACT BYPASSED" else "ACTIVE ENHANCEMENT",
                         isLossless = clock.bitPerfect,
@@ -187,7 +263,7 @@ fun SignalPathInspectorSheet(
                                 if (audioEngine.limiterProcessor.interSampleHeadroom) {
                                     add("-3 dB Headroom Guard" to "Active (-3.01 dBFS True-Peak Ceiling)")
                                 }
-                                if (audioEngine.equalizerActive) {
+                                if (audioEngine.equalizerEnabled) {
                                     add("Parametric Equalizer" to "Active Studio EQ Curve")
                                 }
                                 add("Dither & Quantizer" to audioEngine.ditherer.type.label)
@@ -197,16 +273,16 @@ fun SignalPathInspectorSheet(
 
                     PathArrow(label = "Isochronous Frame Sync")
 
-                    // STAGE 4: OUTPUT TRANSPORT ENGINE
+                    // STAGE 5: OUTPUT TRANSPORT ENGINE
                     SignalStageCard(
-                        stageNumber = 4,
+                        stageNumber = 5,
                         stageTitle = "OUTPUT TRANSPORT & DRIVER",
                         statusText = clock.transport.uppercase(Locale.US),
                         isLossless = clock.bitPerfect,
                         details = listOf(
                             "Driver Type" to clock.transport,
                             "Clock Status" to (if (clock.measuredHz != null) "Hardware Feedback Lock" else "Nominal Clock"),
-                            "Output Rate" to "${clock.outputRate} Hz",
+                            "Output Rate" to "${clock.nominalHz} Hz",
                             "Resampling" to (if (clock.bitPerfect) "ZERO (Bit-Exact Native)" else "Studio Resampler"),
                             "Channel Mode" to "2 Channels (Stereo)"
                         )
@@ -214,9 +290,9 @@ fun SignalPathInspectorSheet(
 
                     PathArrow(label = "Hardware Interface")
 
-                    // STAGE 5: PHYSICAL AUDIO ENDPOINT
+                    // STAGE 6: PHYSICAL AUDIO ENDPOINT
                     SignalStageCard(
-                        stageNumber = 5,
+                        stageNumber = 6,
                         stageTitle = "AUDIO ENDPOINT HARDWARE",
                         statusText = if (clock.bitPerfect) "BIT-PERFECT" else "SYSTEM OUTPUT",
                         isLossless = clock.bitPerfect,
@@ -239,6 +315,7 @@ private fun SignalStageCard(
     statusText: String,
     isLossless: Boolean,
     details: List<Pair<String, String>>,
+    bitGrid: BooleanArray? = null,
     modifier: Modifier = Modifier
 ) {
     ObsidianPanel(modifier.fillMaxWidth()) {
@@ -290,6 +367,27 @@ private fun SignalStageCard(
                     Text(v, style = MaterialTheme.typography.bodySmall, color = Ink)
                 }
             }
+
+            if (bitGrid != null && bitGrid.size == 24) {
+                Spacer(Modifier.height(8.dp))
+                Text("24-BIT ACTIVITY GRID (BIT 23 MSB → BIT 0 LSB)", style = HudStyle.copy(color = InkDim))
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (b in 23 downTo 0) {
+                        val active = bitGrid[b]
+                        Box(
+                            Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (active) Phosphor else Color(0xFF202530))
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -298,7 +396,7 @@ private fun SignalStageCard(
 private fun PathArrow(label: String) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterVertically
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
