@@ -133,4 +133,99 @@ class DsdTest {
         assertEquals(0f, six[3][0], 0f) // LFE dropped
         assertEquals(six[2][0], six[2][1], 0f) // centre to both sides equally
     }
+
+    @Test
+    fun testDopMarkerAlternationAcrossRatesUpToDsd1024() {
+        val rates = listOf(
+            64 * 44100, 64 * 48000,
+            128 * 44100, 128 * 48000,
+            256 * 44100, 256 * 48000,
+            512 * 44100, 512 * 48000,
+            1024 * 44100, 1024 * 48000
+        )
+        val channels = 2
+        val frames = 16
+
+        for (rate in rates) {
+            val src = Array(channels) { c ->
+                ByteArray(frames * 2) { i -> ((c * 17 + i * 3) and 0xFF).toByte() }
+            }
+            val out = FloatArray(frames * channels)
+            var currentMarker = Dop.MARKER_A
+            currentMarker = Dop.pack(src, channels, frames, out, currentMarker)
+            assertEquals(Dop.MARKER_A, currentMarker) // after even number of frames, marker returns to start
+
+            var expectedMarker = Dop.MARKER_A
+            for (f in 0 until frames) {
+                for (c in 0 until channels) {
+                    val w = kotlin.math.round((out[f * channels + c] * 8388608.0)).toInt() and 0xFFFFFF
+                    val marker = w shr 16
+                    val dsdHigh = (w shr 8) and 0xFF
+                    val dsdLow = w and 0xFF
+                    assertEquals(expectedMarker, marker)
+                    assertEquals(src[c][2 * f].toInt() and 0xFF, dsdHigh)
+                    assertEquals(src[c][2 * f + 1].toInt() and 0xFF, dsdLow)
+                }
+                expectedMarker = if (expectedMarker == Dop.MARKER_A) Dop.MARKER_B else Dop.MARKER_A
+            }
+        }
+    }
+
+    @Test
+    fun testDsdToPcmDecimationFilterLinearPhaseAndStopbandRejection() {
+        val rates = listOf(
+            64 * 44100, 64 * 48000,
+            128 * 44100, 128 * 48000,
+            256 * 44100, 256 * 48000,
+            512 * 44100, 512 * 48000,
+            1024 * 44100, 1024 * 48000
+        )
+
+        for (dsdRate in rates) {
+            val conv = DsdToPcm(dsdRate, 1)
+            val h = conv.filterCoefficients()
+            val n = h.size
+            val alpha = (n - 1) / 2.0
+
+            // 1. Strict Linear Phase: Type II FIR coefficient symmetry h[i] == h[n - 1 - i]
+            for (i in 0 until n / 2) {
+                assertEquals("Linear phase symmetry failure at index $i for rate $dsdRate", h[i], h[n - 1 - i], 1e-15)
+            }
+
+            // 2. Passband response across 0 Hz - 20 kHz: ripple < 0.1 dB
+            val w20k = 2.0 * PI * 20_000.0 / dsdRate
+            var h20k = 0.0
+            for (k in 0 until n / 2) {
+                h20k += 2.0 * h[k] * kotlin.math.cos(w20k * (alpha - k))
+            }
+            val pbDropDb = -20.0 * kotlin.math.log10(h20k)
+            assertTrue("Passband drop at 20 kHz must be < 0.1 dB (was $pbDropDb dB)", pbDropDb in -0.01..0.1)
+
+            // 3. Stopband rejection: evaluate DTFT at critical frequencies in [outRate / 2, dsdRate / 2]
+            val outNyquist = conv.outRate / 2.0
+            val testFreqs = doubleArrayOf(
+                outNyquist,
+                outNyquist * 1.1,
+                outNyquist * 1.5,
+                conv.outRate.toDouble(),
+                conv.outRate * 2.0,
+                dsdRate / 4.0,
+                dsdRate / 2.0
+            )
+
+            for (f in testFreqs) {
+                if (f > dsdRate / 2.0) continue
+                val w = 2.0 * PI * f / dsdRate
+                var mag = 0.0
+                for (k in 0 until n / 2) {
+                    mag += 2.0 * h[k] * kotlin.math.cos(w * (alpha - k))
+                }
+                val attenDb = -20.0 * kotlin.math.log10(abs(mag).coerceAtLeast(1e-15))
+                assertTrue(
+                    "Stopband rejection at $f Hz for rate $dsdRate must be > 140 dB (was $attenDb dB)",
+                    attenDb > 140.0
+                )
+            }
+        }
+    }
 }

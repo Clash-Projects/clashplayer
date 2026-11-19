@@ -19,7 +19,13 @@ class AudioEngine(
     @Volatile var outputHeadroom = true
     // Attenuation reserved for EQ/tone boosts when the system controls volume (DVC off); 0 disables it
     var dvcHeadroomDb: Float = 6.0f
+    @Volatile private var cachedBypassGain: Float = 1.0f
     var volume: Float = 1.0f // 0.0 to 1.0
+        set(value) {
+            field = value
+            val db = volumeDb()
+            cachedBypassGain = if (db != null) 10.0.pow(db / 20.0).toFloat() else 0f
+        }
     var volumeSteps: Int = 100
     var volumeCurve: VolumeCurve = VolumeCurve.MEDIA
     // Last applied master gain; each buffer ramps from it to the new target so volume moves don't click
@@ -271,7 +277,7 @@ class AudioEngine(
      */
     fun processInterleavedStereo(buffer: FloatArray, offset: Int, sampleCount: Int) {
         if (bitPerfect) {
-            if (bypassSoftwareVolume) applyRampedGain(buffer, offset, sampleCount, volumeDb()?.let { 10.0.pow(it / 20.0).toFloat() } ?: 0f)
+            if (bypassSoftwareVolume) applyRampedGain(buffer, offset, sampleCount, cachedBypassGain)
             if (visualizerFeed) {
                 // Read-only tap of the front pair: the samples themselves stay untouched
                 val ch = bypassChannels.coerceAtLeast(1)
@@ -375,15 +381,17 @@ class AudioEngine(
             }
 
             // Soft-knee peak limiting
-            left = limiterProcessor.process(left)
-            right = limiterProcessor.process(right)
+            left = limiterProcessor.process(left, 0)
+            right = limiterProcessor.process(right, 1)
 
             buffer[i] = left
             buffer[i + 1] = right
 
             // Feed FFT window for real-time visualizer
-            fftWindow[fftIndex] = (left + right) * 0.5f
-            fftIndex = (fftIndex + 1) % fftSize
+            if (visualizerFeed) {
+                fftWindow[fftIndex] = (left + right) * 0.5f
+                fftIndex = (fftIndex + 1) % fftSize
+            }
 
             i += 2
         }
@@ -392,7 +400,9 @@ class AudioEngine(
             clarityProcessor.settle()
         }
 
-        updateFftAndWaveform()
+        if (visualizerFeed) {
+            updateFftAndWaveform()
+        }
         fidelityAnalyzer.feed(buffer, offset, sampleCount)
         audioXRayAnalyzer.feed(buffer, offset, sampleCount)
     }
@@ -449,7 +459,16 @@ class AudioEngine(
         return (sum / 24f * 3.2f).coerceIn(0f, 1f)
     }
 
+    // Preallocated double-buffers for zero-GC visualizer publishing
+    private val fftPublishBuffers = arrayOf(FloatArray(128), FloatArray(128))
+    private val wavePublishBuffers = arrayOf(FloatArray(256), FloatArray(256))
+    @Volatile private var visualizerBufferIdx = 0
+
     private fun updateFftAndWaveform() {
+        val targetIdx = visualizerBufferIdx
+        val targetFft = fftPublishBuffers[targetIdx]
+        val targetWave = wavePublishBuffers[targetIdx]
+
         // Fast Hartley/DFT bin magnitude approximation for 128 visualizer bins
         val step = fftSize / 128
         for (bin in 0 until 128) {
@@ -461,16 +480,26 @@ class AudioEngine(
             }
             // Smooth decay envelope
             val target = (mag / step.toFloat()) * (1.0f + bin * 0.05f)
-            spectrumMagnitudes[bin] = spectrumMagnitudes[bin] * 0.75f + target * 0.25f
+            val updated = spectrumMagnitudes[bin] * 0.75f + target * 0.25f
+            spectrumMagnitudes[bin] = updated
+            targetFft[bin] = updated
         }
 
         // Waveform downsample
         for (w in 0 until 256) {
-            waveformBuffer[w] = fftWindow[(w * 2) % fftSize]
+            val sample = fftWindow[(w * 2) % fftSize]
+            waveformBuffer[w] = sample
+            targetWave[w] = sample
         }
-        // Publish copies: the UI must never see the audio thread mutating an array it is drawing
-        _fftSpectrumFlow.value = spectrumMagnitudes.copyOf()
-        _waveformFlow.value = waveformBuffer.copyOf()
+
+        // Advance buffer index and publish preallocated references only if collectors are active
+        visualizerBufferIdx = 1 - targetIdx
+        if (_fftSpectrumFlow.subscriptionCount.value > 0) {
+            _fftSpectrumFlow.value = targetFft
+        }
+        if (_waveformFlow.subscriptionCount.value > 0) {
+            _waveformFlow.value = targetWave
+        }
     }
 
 }

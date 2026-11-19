@@ -121,6 +121,7 @@ class AudioOutputManager(private val context: Context) {
     }
 
     private var keepAliveTrack: android.media.AudioTrack? = null
+    private val silentKeepAliveBuffer = ByteArray(8000)
 
     /**
      * Silent Keep-Alive loop pinned to the internal speaker.
@@ -142,7 +143,7 @@ class AudioOutputManager(private val context: Context) {
             if (speaker != null) {
                 track.setPreferredDevice(speaker)
             }
-            track.write(ByteArray(8000), 0, 8000)
+            track.write(silentKeepAliveBuffer, 0, silentKeepAliveBuffer.size)
             track.setLoopPoints(0, 4000, -1)
             track.setVolume(0.0f)
             track.play()
@@ -177,7 +178,8 @@ class AudioOutputManager(private val context: Context) {
         usbManager.requestPermission(dac, pi)
     }
 
-    private var bitPerfectDevice: AudioDeviceInfo? = null
+    var bitPerfectDevice: AudioDeviceInfo? = null
+        private set
 
     /**
      * Ask the system for a bit-perfect USB mixer at the track's exact rate (Android 14+).
@@ -215,6 +217,19 @@ class AudioOutputManager(private val context: Context) {
     companion object {
         private const val TAG = "AudioOutputManager"
         private const val ACTION_USB_PERMISSION = "com.clashplayer.USB_PERMISSION"
+
+        /**
+         * Pins the current thread to the Linux kernel real-time audio scheduling group
+         * (THREAD_PRIORITY_URGENT_AUDIO = -19) to prevent preemption, CPU core migration,
+         * and audio buffer underruns.
+         */
+        fun setAudioThreadPriority() {
+            try {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed to set audio thread priority: ${t.message}")
+            }
+        }
 
         /** Integer bits an encoding carries exactly; 0 for encodings the render loop can't write. */
         fun precisionBits(encoding: Int): Int = when (encoding) {

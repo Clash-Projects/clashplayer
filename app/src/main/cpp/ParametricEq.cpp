@@ -112,6 +112,10 @@ void ParametricEq::configure(double sampleRate, std::int32_t channels) noexcept 
 void ParametricEq::reset() noexcept {
     for (auto& state : z1_) state.fill(0.0);
     for (auto& state : z2_) state.fill(0.0);
+    for (auto& s : simdState_) {
+        s.z1[0] = 0.0f; s.z1[1] = 0.0f;
+        s.z2[0] = 0.0f; s.z2[1] = 0.0f;
+    }
 }
 
 void ParametricEq::syncConfiguration() noexcept {
@@ -145,17 +149,126 @@ void ParametricEq::syncConfiguration() noexcept {
         if (slotSource_[active] != static_cast<std::int32_t>(i)) {
             z1_[active].fill(0.0);
             z2_[active].fill(0.0);
+            simdState_[active].z1[0] = 0.0f; simdState_[active].z1[1] = 0.0f;
+            simdState_[active].z2[0] = 0.0f; simdState_[active].z2[1] = 0.0f;
             slotSource_[active] = static_cast<std::int32_t>(i);
         }
-        coefficients_[active++] = next;
+        coefficients_[active] = next;
+        simdCoefficients_[active].b0 = static_cast<float>(next.b0);
+        simdCoefficients_[active].b1 = static_cast<float>(next.b1);
+        simdCoefficients_[active].b2 = static_cast<float>(next.b2);
+        simdCoefficients_[active].a1 = static_cast<float>(next.a1);
+        simdCoefficients_[active].a2 = static_cast<float>(next.a2);
+        ++active;
     }
     for (std::size_t i = active; i < kMaxFilters; ++i) {
         z1_[i].fill(0.0);
         z2_[i].fill(0.0);
+        simdState_[i].z1[0] = 0.0f; simdState_[i].z1[1] = 0.0f;
+        simdState_[i].z2[0] = 0.0f; simdState_[i].z2[1] = 0.0f;
         slotSource_[i] = -1;
     }
     activeCount_ = active;
     if (!enabled_) activeCount_ = 0;
+}
+
+void ParametricEq::processStereoNeon(float* samples, std::size_t frames) noexcept {
+    for (std::size_t i = 0; i < activeCount_; ++i) {
+        const float b0 = simdCoefficients_[i].b0;
+        const float b1 = simdCoefficients_[i].b1;
+        const float b2 = simdCoefficients_[i].b2;
+        const float a1 = simdCoefficients_[i].a1;
+        const float a2 = simdCoefficients_[i].a2;
+        SimdState& state = simdState_[i];
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+        float32x4_t Z = vld1q_f32(reinterpret_cast<const float*>(&state));
+        const float32x4_t B12 = {b1, b1, b2, b2};
+        const float32x4_t A12 = {a1, a1, a2, a2};
+        const float32x2_t vzero = vdup_n_f32(0.0f);
+
+        std::size_t f = 0;
+        for (; f + 1 < frames; f += 2) {
+            float* ptr = samples + f * 2;
+            float32x4_t x4 = vld1q_f32(ptr);
+            float32x2_t x0 = vget_low_f32(x4);
+            float32x2_t x1 = vget_high_f32(x4);
+
+            float32x2_t y0 = vmla_n_f32(vget_low_f32(Z), x0, b0);
+            float32x4_t X0 = vcombine_f32(x0, x0);
+            float32x4_t Y0 = vcombine_f32(y0, y0);
+            float32x4_t Z_shift0 = vcombine_f32(vget_high_f32(Z), vzero);
+            Z = vmlaq_f32(Z_shift0, B12, X0);
+            Z = vmlsq_f32(Z, A12, Y0);
+
+            float32x2_t y1 = vmla_n_f32(vget_low_f32(Z), x1, b0);
+            float32x4_t X1 = vcombine_f32(x1, x1);
+            float32x4_t Y1 = vcombine_f32(y1, y1);
+            float32x4_t Z_shift1 = vcombine_f32(vget_high_f32(Z), vzero);
+            Z = vmlaq_f32(Z_shift1, B12, X1);
+            Z = vmlsq_f32(Z, A12, Y1);
+
+            vst1q_f32(ptr, vcombine_f32(y0, y1));
+        }
+        for (; f < frames; ++f) {
+            float* ptr = samples + f * 2;
+            float32x2_t x0 = vld1_f32(ptr);
+            float32x2_t y0 = vmla_n_f32(vget_low_f32(Z), x0, b0);
+            vst1_f32(ptr, y0);
+            float32x4_t X0 = vcombine_f32(x0, x0);
+            float32x4_t Y0 = vcombine_f32(y0, y0);
+            float32x4_t Z_shift0 = vcombine_f32(vget_high_f32(Z), vzero);
+            Z = vmlaq_f32(Z_shift0, B12, X0);
+            Z = vmlsq_f32(Z, A12, Y0);
+        }
+        vst1q_f32(reinterpret_cast<float*>(&state), Z);
+#else
+        float z1_L = state.z1[0], z1_R = state.z1[1];
+        float z2_L = state.z2[0], z2_R = state.z2[1];
+        for (std::size_t f = 0; f < frames; ++f) {
+            float* ptr = samples + f * 2;
+            const float inL = ptr[0], inR = ptr[1];
+            const float outL = b0 * inL + z1_L;
+            const float outR = b0 * inR + z1_R;
+            z1_L = b1 * inL - a1 * outL + z2_L;
+            z1_R = b1 * inR - a1 * outR + z2_R;
+            z2_L = b2 * inL - a2 * outL;
+            z2_R = b2 * inR - a2 * outR;
+            ptr[0] = outL;
+            ptr[1] = outR;
+        }
+        state.z1[0] = z1_L; state.z1[1] = z1_R;
+        state.z2[0] = z2_L; state.z2[1] = z2_R;
+#endif
+    }
+
+    const float gain = static_cast<float>(preampGain_);
+    if (std::abs(gain - 1.0f) >= 1.0e-5f) {
+        const std::size_t totalSamples = frames * 2;
+        std::size_t i = 0;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+        const float32x4_t vgain = vdupq_n_f32(gain);
+        for (; i + 3 < totalSamples; i += 4) {
+            float32x4_t s = vld1q_f32(samples + i);
+            s = vmulq_f32(s, vgain);
+            vst1q_f32(samples + i, s);
+        }
+#endif
+        for (; i < totalSamples; ++i) {
+            samples[i] *= gain;
+        }
+    }
+
+    for (std::size_t i = 0; i < activeCount_; ++i) {
+        for (int ch = 0; ch < 2; ++ch) {
+            if (!std::isfinite(simdState_[i].z1[ch]) || std::abs(simdState_[i].z1[ch]) < 1.0e-20f) {
+                simdState_[i].z1[ch] = 0.0f;
+            }
+            if (!std::isfinite(simdState_[i].z2[ch]) || std::abs(simdState_[i].z2[ch]) < 1.0e-20f) {
+                simdState_[i].z2[ch] = 0.0f;
+            }
+        }
+    }
 }
 
 bool ParametricEq::process(float* samples, std::int32_t frameCount, std::int32_t channelCount) noexcept {
@@ -165,6 +278,12 @@ bool ParametricEq::process(float* samples, std::int32_t frameCount, std::int32_t
     }
     syncConfiguration();
     if (!enabled_ || (activeCount_ == 0 && std::abs(preampGain_ - 1.0) < 1.0e-6)) return false;
+
+    if (channelCount == 2) {
+        processStereoNeon(samples, static_cast<std::size_t>(frameCount));
+        return true;
+    }
+
     const auto channels = static_cast<std::size_t>(channelCount);
     const auto frames = static_cast<std::size_t>(frameCount);
     for (std::size_t frame = 0; frame < frames; ++frame) {
@@ -177,12 +296,12 @@ bool ParametricEq::process(float* samples, std::int32_t frameCount, std::int32_t
     // Denormal / blow-up guard once per block instead of per sample.
     for (std::size_t i = 0; i < activeCount_; ++i) {
         for (std::size_t ch = 0; ch < channels; ++ch) {
-            if (!std::isfinite(z1_[i][ch]) || !std::isfinite(z2_[i][ch])) {
-                z1_[i][ch] = 0.0;
-                z2_[i][ch] = 0.0;
+            if (!std::isfinite(simdState_[i].z1[ch]) || !std::isfinite(simdState_[i].z2[ch])) {
+                simdState_[i].z1[ch] = 0.0f;
+                simdState_[i].z2[ch] = 0.0f;
             } else {
-                if (std::abs(z1_[i][ch]) < 1.0e-20) z1_[i][ch] = 0.0;
-                if (std::abs(z2_[i][ch]) < 1.0e-20) z2_[i][ch] = 0.0;
+                if (std::abs(simdState_[i].z1[ch]) < 1.0e-20f) simdState_[i].z1[ch] = 0.0f;
+                if (std::abs(simdState_[i].z2[ch]) < 1.0e-20f) simdState_[i].z2[ch] = 0.0f;
             }
         }
     }
@@ -204,6 +323,17 @@ bool ParametricEq::processPcm(std::uint8_t* data, std::size_t byteCount, std::in
     }
     const std::size_t frameBytes = bytesPerSample * channels;
     const std::size_t frames = byteCount / frameBytes;
+    if (encoding == kPcmFloat && channels == 2) {
+        float* floatSamples = reinterpret_cast<float*>(data);
+        processStereoNeon(floatSamples, frames);
+        for (std::size_t i = 0; i < frames * 2; ++i) {
+            floatSamples[i] = std::isfinite(floatSamples[i])
+                ? std::clamp(floatSamples[i], -1.0F, 1.0F)
+                : 0.0F;
+        }
+        return true;
+    }
+
     for (std::size_t frame = 0; frame < frames; ++frame) {
         std::uint8_t* base = data + frame * frameBytes;
         for (std::size_t ch = 0; ch < channels; ++ch) {
@@ -257,9 +387,9 @@ bool ParametricEq::processPcm(std::uint8_t* data, std::size_t byteCount, std::in
     }
     for (std::size_t i = 0; i < activeCount_; ++i) {
         for (std::size_t ch = 0; ch < channels; ++ch) {
-            if (!std::isfinite(z1_[i][ch]) || !std::isfinite(z2_[i][ch])) {
-                z1_[i][ch] = 0.0;
-                z2_[i][ch] = 0.0;
+            if (!std::isfinite(simdState_[i].z1[ch]) || !std::isfinite(simdState_[i].z2[ch])) {
+                simdState_[i].z1[ch] = 0.0f;
+                simdState_[i].z2[ch] = 0.0f;
             }
         }
     }

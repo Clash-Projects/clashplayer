@@ -58,8 +58,7 @@ class DsdRemaster(val inRate: Int, val dsdRate: Int, val channels: Int, gainDb: 
                     nBits = 0
                     if (++byteIdx == 2) {
                         if (written + channels > out.size) return written // caller sized out with maxOut
-                        marker = Dop.pack(pair, channels, 1, dopFrame, marker)
-                        System.arraycopy(dopFrame, 0, out, written, channels)
+                        marker = Dop.pack(pair, channels, 1, out, marker, written)
                         written += channels
                         byteIdx = 0
                     }
@@ -94,7 +93,7 @@ class DsdRemaster(val inRate: Int, val dsdRate: Int, val channels: Int, gainDb: 
     companion object {
         private const val ORDER = 5
 
-        /** DSD rate for a remaster target multiple (64, 128, 256) and a PCM rate's family. */
+        /** DSD rate for a remaster target multiple (64, 128, 256, 512, 1024) and a PCM rate's family. */
         fun dsdRateFor(multiple: Int, pcmRate: Int, allow48k: Boolean) =
             multiple * if (allow48k && pcmRate % 48000 == 0) 48000 else 44100
 

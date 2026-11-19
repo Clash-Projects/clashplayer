@@ -63,7 +63,9 @@ class ClarityProcessor(
             System.loadLibrary("nativeout")
             true
         } catch (e: Throwable) {
-            Log.w(TAG, "Native audio engine unavailable, using Kotlin DSP fallback: ${e.message}")
+            try {
+                Log.w(TAG, "Native audio engine unavailable, using Kotlin DSP fallback: ${e.message}")
+            } catch (_: Throwable) {}
             false
         }
 

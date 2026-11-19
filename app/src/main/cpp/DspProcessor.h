@@ -6,6 +6,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 #include "ParametricEq.h"
 
@@ -77,8 +80,12 @@ private:
         double b2{0.0};
         double a1{0.0};
         double a2{0.0};
-        std::array<double, 2> z1{};
-        std::array<double, 2> z2{};
+        float b0_f{1.0f};
+        float b1_f{0.0f};
+        float b2_f{0.0f};
+        float a1_f{0.0f};
+        float a2_f{0.0f};
+        alignas(16) float stateZ_[4]{0.0f, 0.0f, 0.0f, 0.0f};
 
         static Biquad highPass(double sampleRate, double frequency, double q) noexcept;
         static Biquad peaking(
@@ -102,32 +109,56 @@ private:
             double slope,
             double gainDb) noexcept;
 
+        inline void tickStereo(float inLeft, float inRight, float& outLeft, float& outRight) noexcept {
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+            const float32x2_t x_lr = {inLeft, inRight};
+            float32x4_t Z = vld1q_f32(stateZ_);
+            const float32x2_t y_lr = vmla_n_f32(vget_low_f32(Z), x_lr, b0_f);
+            outLeft = vget_lane_f32(y_lr, 0);
+            outRight = vget_lane_f32(y_lr, 1);
+            const float32x4_t X = vcombine_f32(x_lr, x_lr);
+            const float32x4_t Y = vcombine_f32(y_lr, y_lr);
+            const float32x4_t B12 = {b1_f, b1_f, b2_f, b2_f};
+            const float32x4_t A12 = {a1_f, a1_f, a2_f, a2_f};
+            const float32x4_t Z_shift = vcombine_f32(vget_high_f32(Z), vdup_n_f32(0.0f));
+            Z = vmlaq_f32(Z_shift, B12, X);
+            Z = vmlsq_f32(Z, A12, Y);
+            vst1q_f32(stateZ_, Z);
+#else
+            const float outL = b0_f * inLeft + stateZ_[0];
+            const float outR = b0_f * inRight + stateZ_[1];
+            stateZ_[0] = b1_f * inLeft - a1_f * outL + stateZ_[2];
+            stateZ_[1] = b1_f * inRight - a1_f * outR + stateZ_[3];
+            stateZ_[2] = b2_f * inLeft - a2_f * outL;
+            stateZ_[3] = b2_f * inRight - a2_f * outR;
+            outLeft = outL;
+            outRight = outR;
+#endif
+        }
+
         [[nodiscard]] inline float tick(float input, std::size_t channel) noexcept {
-            const double value = static_cast<double>(input);
-            const double output = b0 * value + z1[channel];
-            z1[channel] = b1 * value - a1 * output + z2[channel];
-            z2[channel] = b2 * value - a2 * output;
-            return static_cast<float>(output);
+            const float val = input;
+            const float out = b0_f * val + stateZ_[channel];
+            stateZ_[channel] = b1_f * val - a1_f * out + stateZ_[channel + 2];
+            stateZ_[channel + 2] = b2_f * val - a2_f * out;
+            return out;
         }
 
         // Once per block, not per sample: five branches per tick cost more
         // than the whole filter. Output is already sanitized per sample.
         inline void settle() noexcept {
-            for (std::size_t channel = 0; channel < z1.size(); ++channel) {
-                if (!std::isfinite(z1[channel]) || !std::isfinite(z2[channel])) {
-                    z1[channel] = 0.0;
-                    z2[channel] = 0.0;
-                }
-                if (std::abs(z1[channel]) < 1.0e-20) z1[channel] = 0.0;
-                if (std::abs(z2[channel]) < 1.0e-20) z2[channel] = 0.0;
+            for (float& s : stateZ_) {
+                if (!std::isfinite(s) || std::abs(s) < 1.0e-20f) s = 0.0f;
             }
         }
 
         [[nodiscard]] double magnitude(double sampleRate, double frequency) const noexcept;
 
         inline void clear() noexcept {
-            z1.fill(0.0);
-            z2.fill(0.0);
+            stateZ_[0] = 0.0f;
+            stateZ_[1] = 0.0f;
+            stateZ_[2] = 0.0f;
+            stateZ_[3] = 0.0f;
         }
     };
 
@@ -223,6 +254,12 @@ private:
     // the rest of the DSP, also while Bit-Perfect is on: the user asked for
     // the correction, so it is applied and the verdict reports "Direct + EQ".
     ParametricEq parametricEq_{};
+
+    // 4x oversampled true-peak sample history
+    float prevLeft1_{0.0f};
+    float prevLeft2_{0.0f};
+    float prevRight1_{0.0f};
+    float prevRight2_{0.0f};
 
     // Rebuilds one trimmed stage from its design spec plus the smoothed
     // trim value. Peaking/shelf stages keep filter state (coefficients

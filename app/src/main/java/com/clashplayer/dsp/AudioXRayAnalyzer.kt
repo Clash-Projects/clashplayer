@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.abs
 import kotlin.math.log10
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -62,28 +63,45 @@ class AudioXRayAnalyzer {
 
         var i = offset
         val end = offset + count
+        var peak = peakSample
+        var sumS = sumSamples
+        var sumSq = sumSquares
+        var mask = bitOrMask
+        var counter = sampleCounter
+
         while (i < end) {
             val s = buffer[i]
             val absS = abs(s)
-            if (absS > peakSample) peakSample = absS
-            sumSamples += s
-            sumSquares += s * s
+            if (absS > peak) peak = absS
+            sumS += s
+            sumSq += s * s
 
             // Quantize to 24-bit signed integer word [-8388608, 8388607]
-            val int24 = (s.coerceIn(-1.0f, 1.0f) * 8388607.0f).toInt()
-            bitOrMask = bitOrMask or (abs(int24) and 0xFFFFFF)
+            val int24 = (s * 8388608.0f).toInt().coerceIn(-8388608, 8388607)
+            mask = mask or (int24 and 0xFFFFFF)
 
-            sampleCounter++
-            if (sampleCounter >= analyzeWindow) {
+            counter++
+            if (counter >= analyzeWindow) {
+                peakSample = peak
+                sumSamples = sumS
+                sumSquares = sumSq
+                bitOrMask = mask
+                sampleCounter = counter
                 publishMetrics()
-                sampleCounter = 0
-                bitOrMask = 0
-                sumSamples = 0.0
-                sumSquares = 0.0
-                peakSample = 0.0f
+                counter = 0
+                mask = 0
+                sumS = 0.0
+                sumSq = 0.0
+                peak = 0.0f
             }
             i++
         }
+
+        peakSample = peak
+        sumSamples = sumS
+        sumSquares = sumSq
+        bitOrMask = mask
+        sampleCounter = counter
     }
 
     private fun publishMetrics() {
@@ -98,21 +116,22 @@ class AudioXRayAnalyzer {
         for (b in 23 downTo 0) {
             if (grid[b]) {
                 highestBit = max(highestBit, b)
-                lowestBit = minOf(lowestBit, b)
+                lowestBit = min(lowestBit, b)
             }
         }
 
         // Check if the bottom 8 bits (bits 0..7) are completely dead (padded 16-bit file)
         val bottom8Dead = (mask and 0x0000FF) == 0
-        val isPadded = bottom8Dead && highestBit >= 16
-        val depth = if (isPadded) 16 else if (highestBit >= 20) 24 else if (highestBit >= 16) 16 else 16
+        val isPadded = (mask != 0) && bottom8Dead && highestBit >= 16
+        val depth = if (isPadded) 16 else if (!bottom8Dead && mask != 0) 24 else 16
 
-        val dcOffset = (sumSamples / analyzeWindow.toDouble()).toFloat() * 100.0f
-        val rms = sqrt(max(1e-12, sumSquares / analyzeWindow.toDouble())).toFloat()
+        val n = max(1, sampleCounter)
+        val dcOffset = (sumSamples / n.toDouble()).toFloat() * 100.0f
+        val rms = sqrt(max(1e-12, sumSquares / n.toDouble())).toFloat()
         val crestFactor = if (rms > 1e-6f) (20.0 * log10((peakSample / rms).toDouble())).toFloat() else 0.0f
         val snr = depth * 6.02f + 1.76f
 
-        _metrics.value = XRayMetrics(
+        val newMetrics = XRayMetrics(
             effectiveBitDepth = depth,
             isPadded16Bit = isPadded,
             activeBitsMask = mask,
@@ -121,6 +140,9 @@ class AudioXRayAnalyzer {
             crestFactorDb = crestFactor.coerceIn(0f, 40f),
             theoreticalSnrDb = snr
         )
+        if (_metrics.value != newMetrics) {
+            _metrics.value = newMetrics
+        }
     }
 
     fun reset() {

@@ -1,15 +1,15 @@
 package com.clashplayer.dsd
 
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * DSD to PCM for outputs that can't take DoP: one linear-phase FIR (Blackman-windowed sinc, ~30 kHz cutoff,
- * 1024 taps per DSD64 rate) decimating straight to 88.2/96 kHz. Each input byte is looked up in a per-position
+ * DSD to PCM for outputs that can't take DoP: linear-phase FIR (Kaiser-windowed sinc, 28 kHz cutoff, beta=14.5,
+ * >140 dB stopband rejection) decimating straight to 88.2/96 kHz. Each input byte is looked up in a per-position
  * table of its 8 taps, so the cost is one table lookup per input byte.
  */
-class DsdToPcm(dsdRate: Int, channels: Int) {
+class DsdToPcm(val dsdRate: Int, channels: Int) {
     val outRate = if (dsdRate % 44100 == 0) 88200 else 96000
     /** DSD bytes per channel consumed per PCM sample. */
     val bytesPerSample = dsdRate / outRate / 8
@@ -20,23 +20,33 @@ class DsdToPcm(dsdRate: Int, channels: Int) {
 
     init {
         require(bytesPerSample >= 1 && dsdRate % (outRate * 8) == 0) { "Unsupported DSD rate $dsdRate" }
-        val n = tapBytes * 8
-        val fc = 30_000.0 / dsdRate
-        val h = DoubleArray(n) { i ->
-            val x = i - (n - 1) / 2.0
-            val sinc = if (x == 0.0) 2 * fc else sin(2 * PI * fc * x) / (PI * x)
-            val w = 0.42 - 0.5 * cos(2 * PI * i / (n - 1)) + 0.08 * cos(4 * PI * i / (n - 1))
-            sinc * w
-        }
-        val sum = h.sum()
+        val h = filterCoefficients()
         // table[k][v]: contribution of byte v sitting k bytes back; its bit 7 is the earliest (largest delay)
         table = Array(tapBytes) { k ->
             FloatArray(256) { v ->
                 var acc = 0.0
-                for (j in 0 until 8) acc += h[8 * k + (7 - j)] / sum * (if (v shr (7 - j) and 1 == 1) 1.0 else -1.0)
+                for (j in 0 until 8) acc += h[8 * k + (7 - j)] * (if (v shr (7 - j) and 1 == 1) 1.0 else -1.0)
                 acc.toFloat()
             }
         }
+    }
+
+    internal fun filterCoefficients(): DoubleArray {
+        val n = tapBytes * 8
+        val fc = 28_000.0 / dsdRate
+        val beta = 14.5
+        val i0Beta = besselI0(beta)
+        val alpha = (n - 1) / 2.0
+        val h = DoubleArray(n) { i ->
+            val x = i - alpha
+            val sinc = if (x == 0.0) 2 * fc else sin(2 * PI * fc * x) / (PI * x)
+            val ratio = x / alpha
+            val karg = beta * sqrt((1.0 - ratio * ratio).coerceAtLeast(0.0))
+            val w = besselI0(karg) / i0Beta
+            sinc * w
+        }
+        val sum = h.sum()
+        return DoubleArray(n) { h[it] / sum }
     }
 
     /**
@@ -70,6 +80,21 @@ class DsdToPcm(dsdRate: Int, channels: Int) {
         history.forEach { it.fill(0x69) }
         head.fill(0)
     }
+
+    companion object {
+        private fun besselI0(x: Double): Double {
+            var sum = 1.0
+            var term = 1.0
+            var k = 1
+            val xsq4 = (x * x) / 4.0
+            while (term > 1e-16 * sum) {
+                term *= xsq4 / (k * k)
+                sum += term
+                k++
+            }
+            return sum
+        }
+    }
 }
 
 /** DSD over PCM (DoP v1.1): two DSD bytes per channel in each 24-bit sample, under an alternating 0x05/0xFA marker. */
@@ -79,11 +104,11 @@ object Dop {
 
     /**
      * Packs [frames] DoP frames from per-channel MSB-first DSD bytes (2 bytes per channel per frame) into [out]
-     * as floats that pack back to the exact 24-bit words. Returns the next marker to use.
+     * at [outOffset] as floats that pack back to the exact 24-bit words. Returns the next marker to use.
      */
-    fun pack(src: Array<ByteArray>, channels: Int, frames: Int, out: FloatArray, marker: Int): Int {
+    fun pack(src: Array<ByteArray>, channels: Int, frames: Int, out: FloatArray, marker: Int, outOffset: Int = 0): Int {
         var m = marker
-        var o = 0
+        var o = outOffset
         for (f in 0 until frames) {
             for (c in 0 until channels) {
                 val word = (m shl 16) or ((src[c][2 * f].toInt() and 0xFF) shl 8) or (src[c][2 * f + 1].toInt() and 0xFF)

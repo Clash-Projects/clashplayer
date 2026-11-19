@@ -45,8 +45,9 @@ class IsoPacketizer(private val sampleRate: Int, val packetsPerSecond: Int, priv
          * in 4 bytes. Some devices send the other format, so both readings are tried against the nominal rate.
          */
         fun feedbackToQ16(raw: Long, highSpeed: Boolean, busFramesPerPacket: Int, nominalQ16: Long): Long? {
-            val primary = if (highSpeed) raw else raw shl 2
-            val alternate = if (highSpeed) raw shl 2 else raw
+            val uRaw = raw and 0xFFFFFFFFL
+            val primary = if (highSpeed) uRaw else uRaw shl 2
+            val alternate = if (highSpeed) uRaw shl 2 else uRaw
             for (perBusFrame in longArrayOf(primary, alternate)) {
                 val perPacket = perBusFrame * busFramesPerPacket
                 if (perPacket > 0 && abs(perPacket - nominalQ16) <= nominalQ16 / 8) return perPacket

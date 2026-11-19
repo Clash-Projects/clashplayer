@@ -64,8 +64,8 @@ static void handle_fb(stream_t *s, int i, struct usbdevfs_urb *u) {
             int n = u->iso_frame_desc[0].actual_length;
             if (n >= 3) {
                 unsigned char *b = s->fb_bufs[i];
-                long v = b[0] | (b[1] << 8) | (b[2] << 16) | (n >= 4 ? ((long) b[3] << 24) : 0);
-                atomic_store(&s->feedback, v);
+                uint32_t v = (uint32_t) b[0] | ((uint32_t) b[1] << 8) | ((uint32_t) b[2] << 16) | (n >= 4 ? ((uint32_t) b[3] << 24) : 0);
+                atomic_store(&s->feedback, (long) v);
             }
         } else {
             long bytes = 0;

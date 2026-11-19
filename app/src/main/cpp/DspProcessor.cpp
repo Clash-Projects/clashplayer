@@ -215,6 +215,10 @@ void DspProcessor::reset() noexcept {
     microFadePosition_ = 0;
     dcXPrev_.fill(0.0);
     dcYPrev_.fill(0.0);
+    prevLeft1_ = 0.0f;
+    prevLeft2_ = 0.0f;
+    prevRight1_ = 0.0f;
+    prevRight2_ = 0.0f;
 }
 
 void DspProcessor::setStudioMasterClarity(bool enabled) noexcept {
@@ -548,16 +552,22 @@ void DspProcessor::process(
             equalizedRight = equalizedLeft;
         }
         if (activeEqualizerBands_ != 0U) {
-            for (std::size_t band = 0; band < kEqualizerBandCount; ++band) {
-                if ((activeEqualizerBands_ & static_cast<std::uint16_t>(1U << band)) == 0U) {
-                    continue;
+            if (channelCount == 2) {
+                for (std::size_t band = 0; band < kEqualizerBandCount; ++band) {
+                    if ((activeEqualizerBands_ & static_cast<std::uint16_t>(1U << band)) == 0U) {
+                        continue;
+                    }
+                    equalizerBands_[band].tickStereo(equalizedLeft, equalizedRight, equalizedLeft, equalizedRight);
                 }
-                equalizedLeft = equalizerBands_[band].tick(equalizedLeft, 0);
-                if (channelCount == 2) {
-                    equalizedRight = equalizerBands_[band].tick(equalizedRight, 1);
+            } else {
+                for (std::size_t band = 0; band < kEqualizerBandCount; ++band) {
+                    if ((activeEqualizerBands_ & static_cast<std::uint16_t>(1U << band)) == 0U) {
+                        continue;
+                    }
+                    equalizedLeft = equalizerBands_[band].tick(equalizedLeft, 0);
                 }
+                equalizedRight = equalizedLeft;
             }
-            if (channelCount == 1) equalizedRight = equalizedLeft;
         }
 
         const float dryLeft = equalizedLeft;
@@ -569,36 +579,37 @@ void DspProcessor::process(
             // Effective wet amount: enable crossfade times the clarity mix.
             // At the default mix of 1.0 this equals currentWet_ exactly.
             const float clarityMix = currentWet_ * currentClarityWet_;
-            float wetLeft = subBassHighPass_.tick(dryLeft, 0) * clarityTrimLinear_[0];
-            float wetRight = channelCount == 2
-                ? subBassHighPass_.tick(dryRight, 1) * clarityTrimLinear_[0]
-                : wetLeft;
-            wetLeft = bassFoundation_.tick(wetLeft, 0);
-            wetRight = channelCount == 2
-                ? bassFoundation_.tick(wetRight, 1)
-                : wetLeft;
-            wetLeft = lowMidSeparation_.tick(wetLeft, 0);
-            wetRight = channelCount == 2
-                ? lowMidSeparation_.tick(wetRight, 1)
-                : wetLeft;
-            wetLeft = boxinessControl_.tick(wetLeft, 0);
-            wetRight = channelCount == 2
-                ? boxinessControl_.tick(wetRight, 1)
-                : wetLeft;
-            wetLeft = presenceDetail_.tick(wetLeft, 0);
-            wetRight = channelCount == 2
-                ? presenceDetail_.tick(wetRight, 1)
-                : wetLeft;
-            wetLeft = airDetail_.tick(wetLeft, 0);
-            wetRight = channelCount == 2
-                ? airDetail_.tick(wetRight, 1)
-                : wetLeft;
+            float wetLeft = dryLeft;
+            float wetRight = (channelCount == 2) ? dryRight : dryLeft;
+
+            if (channelCount == 2) {
+                subBassHighPass_.tickStereo(wetLeft, wetRight, wetLeft, wetRight);
+                wetLeft *= clarityTrimLinear_[0];
+                wetRight *= clarityTrimLinear_[0];
+                bassFoundation_.tickStereo(wetLeft, wetRight, wetLeft, wetRight);
+                lowMidSeparation_.tickStereo(wetLeft, wetRight, wetLeft, wetRight);
+                boxinessControl_.tickStereo(wetLeft, wetRight, wetLeft, wetRight);
+                presenceDetail_.tickStereo(wetLeft, wetRight, wetLeft, wetRight);
+                airDetail_.tickStereo(wetLeft, wetRight, wetLeft, wetRight);
+            } else {
+                wetLeft = subBassHighPass_.tick(wetLeft, 0) * clarityTrimLinear_[0];
+                wetLeft = bassFoundation_.tick(wetLeft, 0);
+                wetLeft = lowMidSeparation_.tick(wetLeft, 0);
+                wetLeft = boxinessControl_.tick(wetLeft, 0);
+                wetLeft = presenceDetail_.tick(wetLeft, 0);
+                wetLeft = airDetail_.tick(wetLeft, 0);
+                wetRight = wetLeft;
+            }
 
             // Harmonic Air Exciter: extracts highs above 6 kHz and generates silky tape-style sheen
-            const float exciterInLeft = airExciterFilter_.tick(dryLeft, 0);
-            const float exciterInRight = channelCount == 2
-                ? airExciterFilter_.tick(dryRight, 1)
-                : exciterInLeft;
+            float exciterInLeft = dryLeft;
+            float exciterInRight = (channelCount == 2) ? dryRight : dryLeft;
+            if (channelCount == 2) {
+                airExciterFilter_.tickStereo(exciterInLeft, exciterInRight, exciterInLeft, exciterInRight);
+            } else {
+                exciterInLeft = airExciterFilter_.tick(exciterInLeft, 0);
+                exciterInRight = exciterInLeft;
+            }
             const float excitedLeft = exciterInLeft - (exciterInLeft * exciterInLeft * exciterInLeft * 0.25F);
             const float excitedRight = exciterInRight - (exciterInRight * exciterInRight * exciterInRight * 0.25F);
             wetLeft += excitedLeft * clarityExciterAmount_;
@@ -633,7 +644,30 @@ void DspProcessor::process(
             return x >= 0.0F ? saturated : -saturated;
         };
 
-        const float peak = std::max(std::abs(outputLeft), std::abs(outputRight));
+        // 4x oversampled parabolic true-peak estimation between consecutive samples
+        auto estimateTruePeak = [](float y0, float y1, float y2) noexcept -> float {
+            const float a = 0.5f * (y0 - 2.0f * y1 + y2);
+            const float b = 0.5f * (y2 - y0);
+            if (std::abs(a) > 1.0e-6f) {
+                const float peakX = -b / (2.0f * a);
+                if (std::abs(peakX) <= 1.0f) {
+                    const float interpolated = y1 - (b * b) / (4.0f * a);
+                    return std::max({std::abs(y1), std::abs(interpolated), std::abs(y0), std::abs(y2)});
+                }
+            }
+            return std::max({std::abs(y1), std::abs(y0), std::abs(y2)});
+        };
+        const float truePeakLeft = estimateTruePeak(prevLeft2_, prevLeft1_, outputLeft);
+        const float truePeakRight = (channelCount == 2)
+            ? estimateTruePeak(prevRight2_, prevRight1_, outputRight)
+            : truePeakLeft;
+        prevLeft2_ = prevLeft1_;
+        prevLeft1_ = outputLeft;
+        if (channelCount == 2) {
+            prevRight2_ = prevRight1_;
+            prevRight1_ = outputRight;
+        }
+        const float peak = std::max(truePeakLeft, truePeakRight);
         // Envelope limiter for extreme overloads (> 1.25 peak), preserving dynamic punch
         constexpr float kLimiterEngageThreshold = 1.25F;
         const float requiredLimiterGain = protectionRequired && peak > kLimiterEngageThreshold
@@ -701,6 +735,11 @@ DspProcessor::Biquad DspProcessor::Biquad::highPass(
     filter.b2 = filter.b0;
     filter.a1 = (-2.0 * cosine) / a0;
     filter.a2 = (1.0 - alpha) / a0;
+    filter.b0_f = static_cast<float>(filter.b0);
+    filter.b1_f = static_cast<float>(filter.b1);
+    filter.b2_f = static_cast<float>(filter.b2);
+    filter.a1_f = static_cast<float>(filter.a1);
+    filter.a2_f = static_cast<float>(filter.a2);
     return filter;
 }
 
@@ -720,6 +759,11 @@ DspProcessor::Biquad DspProcessor::Biquad::peaking(
     filter.b2 = (1.0 - alpha * amplitude) / a0;
     filter.a1 = filter.b1;
     filter.a2 = (1.0 - alpha / amplitude) / a0;
+    filter.b0_f = static_cast<float>(filter.b0);
+    filter.b1_f = static_cast<float>(filter.b1);
+    filter.b2_f = static_cast<float>(filter.b2);
+    filter.a1_f = static_cast<float>(filter.a1);
+    filter.a2_f = static_cast<float>(filter.a2);
     return filter;
 }
 
@@ -749,6 +793,11 @@ DspProcessor::Biquad DspProcessor::Biquad::highShelf(
         ((amplitude - 1.0) - (amplitude + 1.0) * cosine) / a0;
     filter.a2 =
         ((amplitude + 1.0) - (amplitude - 1.0) * cosine - beta) / a0;
+    filter.b0_f = static_cast<float>(filter.b0);
+    filter.b1_f = static_cast<float>(filter.b1);
+    filter.b2_f = static_cast<float>(filter.b2);
+    filter.a1_f = static_cast<float>(filter.a1);
+    filter.a2_f = static_cast<float>(filter.a2);
     return filter;
 }
 
@@ -763,6 +812,11 @@ void DspProcessor::Biquad::setPeaking(
     b2 = coefficients.b2;
     a1 = coefficients.a1;
     a2 = coefficients.a2;
+    b0_f = coefficients.b0_f;
+    b1_f = coefficients.b1_f;
+    b2_f = coefficients.b2_f;
+    a1_f = coefficients.a1_f;
+    a2_f = coefficients.a2_f;
 }
 
 void DspProcessor::Biquad::setHighShelf(
@@ -776,6 +830,11 @@ void DspProcessor::Biquad::setHighShelf(
     b2 = coefficients.b2;
     a1 = coefficients.a1;
     a2 = coefficients.a2;
+    b0_f = coefficients.b0_f;
+    b1_f = coefficients.b1_f;
+    b2_f = coefficients.b2_f;
+    a1_f = coefficients.a1_f;
+    a2_f = coefficients.a2_f;
 }
 
 double DspProcessor::Biquad::magnitude(double sampleRate, double frequency) const noexcept {

@@ -53,15 +53,21 @@ class FidelityAnalyzer(
     private var prevR1 = 0f
     private var prevR2 = 0f
 
-    // 3-second block RMS history for DR calculation
-    private val blockRmsList = mutableListOf<Float>()
+    // 3-second block RMS history for DR calculation (zero-allocation ring buffer)
+    private val maxBlocks = 100
+    private val blockRmsHistory = FloatArray(maxBlocks)
+    private val sortBuffer = FloatArray(maxBlocks)
+    private var blockRmsCount = 0
+    private var blockRmsHead = 0
     private var currentBlockSum = 0.0
     private var currentBlockSamples = 0
-    private val blockSize = sampleRate * 3 // 3-second blocks
+    private var blockSize = sampleRate * 3 // 3-second blocks
+    private var framesSincePublish = 0
 
     fun updateSampleRate(newRate: Int) {
         if (newRate > 0 && newRate != sampleRate) {
             sampleRate = newRate
+            blockSize = sampleRate * 3
             reset()
         }
     }
@@ -75,75 +81,116 @@ class FidelityAnalyzer(
 
         var i = offset
         val end = offset + count
+        var pL1 = prevL1
+        var pL2 = prevL2
+        var pR1 = prevR1
+        var pR2 = prevR2
+        var peak = maxPeak
+        var tpPeak = maxTruePeak
+        var clips = clippingCount
+        var sL2 = sumL2
+        var sR2 = sumR2
+        var sLR = sumLR
+        var hiEnergy = highBandEnergy
+        var blockSum = currentBlockSum
+        var blockSamples = currentBlockSamples
+        var samples = sampleCount
+
         while (i < end - 1) {
             val l = buffer[i]
             val r = buffer[i + 1]
 
             val absL = abs(l)
             val absR = abs(r)
-            if (absL > maxPeak) maxPeak = absL
-            if (absR > maxPeak) maxPeak = absR
+            if (absL > peak) peak = absL
+            if (absR > peak) peak = absR
 
             // 4x Oversampled True-Peak estimation using quadratic polynomial peak interpolation
-            val tpL = estimateTruePeak(prevL2, prevL1, l)
-            val tpR = estimateTruePeak(prevR2, prevR1, r)
-            val currentTp = max(tpL, tpR)
-            if (currentTp > maxTruePeak) maxTruePeak = currentTp
-            if (currentTp > 1.0f) clippingCount++
+            var currentTp = max(absL, absR)
+            if (abs(pL1) > 0.5f || abs(pR1) > 0.5f) {
+                val tpL = if (abs(pL1) > 0.5f) estimateTruePeak(pL2, pL1, l) else abs(pL1)
+                val tpR = if (abs(pR1) > 0.5f) estimateTruePeak(pR2, pR1, r) else abs(pR1)
+                val peakCandidate = max(tpL, tpR)
+                if (peakCandidate > currentTp) currentTp = peakCandidate
+            }
+            if (currentTp > tpPeak) tpPeak = currentTp
+            if (currentTp > 1.0f) clips++
 
-            prevL2 = prevL1
-            prevL1 = l
-            prevR2 = prevR1
-            prevR1 = r
+            // Rough high-frequency bandpass approximation via consecutive difference (prior to prev update)
+            val diff = abs(l - pL1) + abs(r - pR1)
+            hiEnergy += diff * diff
+
+            pL2 = pL1
+            pL1 = l
+            pR2 = pR1
+            pR1 = r
 
             // Power & Correlation Accumulators
-            sumL2 += l * l
-            sumR2 += r * r
-            sumLR += l * r
+            sL2 += l * l
+            sR2 += r * r
+            sLR += l * r
 
             val mono = (l + r) * 0.5f
-            currentBlockSum += mono * mono
-            currentBlockSamples++
+            blockSum += mono * mono
+            blockSamples++
 
-            // Rough high-frequency bandpass approximation via consecutive difference
-            val diff = abs(l - prevL1) + abs(r - prevR1)
-            highBandEnergy += diff * diff
-
-            if (currentBlockSamples >= blockSize) {
-                val blockRms = sqrt(currentBlockSum / currentBlockSamples).toFloat()
+            if (blockSamples >= blockSize) {
+                val blockRms = sqrt(blockSum / blockSamples).toFloat()
                 if (blockRms > 0.0001f) {
-                    blockRmsList.add(blockRms)
-                    if (blockRmsList.size > 100) blockRmsList.removeAt(0)
+                    blockRmsHistory[blockRmsHead] = blockRms
+                    blockRmsHead = (blockRmsHead + 1) % maxBlocks
+                    if (blockRmsCount < maxBlocks) blockRmsCount++
                 }
-                currentBlockSum = 0.0
-                currentBlockSamples = 0
+                blockSum = 0.0
+                blockSamples = 0
             }
 
-            sampleCount++
+            samples++
             i += 2
         }
 
-        // Publish updated metrics every ~22050 frames (0.5 sec)
-        if (sampleCount % 22050L < (count / 2)) {
+        prevL1 = pL1
+        prevL2 = pL2
+        prevR1 = pR1
+        prevR2 = pR2
+        maxPeak = peak
+        maxTruePeak = tpPeak
+        clippingCount = clips
+        sumL2 = sL2
+        sumR2 = sR2
+        sumLR = sLR
+        highBandEnergy = hiEnergy
+        currentBlockSum = blockSum
+        currentBlockSamples = blockSamples
+        sampleCount = samples
+
+        // Publish updated metrics initially at 4000 frames and thereafter every ~0.5 sec (sampleRate / 2 frames)
+        framesSincePublish += count / 2
+        if (sampleCount >= 4000L && (framesSincePublish >= sampleRate / 2 || sampleCount - framesSincePublish < 4000L)) {
             publishMetrics()
+            framesSincePublish = 0
         }
     }
 
     /**
      * Parabolic true-peak interpolation of 3 consecutive points.
      * Peak of parabola passing through (x-1, y0), (x, y1), (x+1, y2).
+     * Fast-paths when central sample is not near peak headroom.
      */
     private fun estimateTruePeak(y0: Float, y1: Float, y2: Float): Float {
-        val a = 0.5f * (y0 - 2f * y1 + y2)
-        val b = 0.5f * (y2 - y0)
-        if (abs(a) > 1e-6f) {
-            val peakX = -b / (2f * a)
-            if (abs(peakX) <= 1.0f) {
-                val interpolated = y1 - (b * b) / (4f * a)
-                return max(abs(y1), abs(interpolated))
+        val absY1 = abs(y1)
+        if (absY1 > 0.5f) {
+            val a = 0.5f * (y0 - 2f * y1 + y2)
+            val b = 0.5f * (y2 - y0)
+            if (abs(a) > 1e-6f && y1 * a < 0f) {
+                val peakX = -b / (2f * a)
+                if (abs(peakX) <= 1.0f) {
+                    val interpolated = y1 - (b * b) / (4f * a)
+                    return max(absY1, abs(interpolated))
+                }
             }
         }
-        return abs(y1)
+        return absY1
     }
 
     private fun publishMetrics() {
@@ -162,10 +209,17 @@ class FidelityAnalyzer(
 
         // 4. TT Dynamic Range (DR score)
         // DR = Peak_dB - RMS_loudest_20%
-        val drScore = if (blockRmsList.isNotEmpty()) {
-            val sortedRms = blockRmsList.sortedDescending()
-            val top20Count = max(1, (sortedRms.size * 0.2f).roundToInt())
-            val top20Rms = sortedRms.take(top20Count).average().toFloat()
+        val drScore = if (blockRmsCount > 0) {
+            val count = blockRmsCount
+            System.arraycopy(blockRmsHistory, 0, sortBuffer, 0, count)
+            java.util.Arrays.sort(sortBuffer, 0, count)
+            val top20Count = max(1, (count * 0.2f).roundToInt())
+            var top20Sum = 0.0
+            val startIdx = count - top20Count
+            for (k in startIdx until count) {
+                top20Sum += sortBuffer[k]
+            }
+            val top20Rms = (top20Sum / top20Count).toFloat()
             val peakDb = if (maxPeak > 1e-6f) 20f * log10(maxPeak) else 0f
             val topRmsDb = if (top20Rms > 1e-6f) 20f * log10(top20Rms) else -30f
             (peakDb - topRmsDb).roundToInt().coerceIn(1, 20)
@@ -199,7 +253,7 @@ class FidelityAnalyzer(
             }
         }
 
-        _metricsFlow.value = Metrics(
+        val newMetrics = Metrics(
             dynamicRange = drScore,
             truePeakDb = truePeakDb,
             trueClippingCount = clippingCount,
@@ -209,10 +263,14 @@ class FidelityAnalyzer(
             fakeHiResWarning = warning,
             stereoCorrelation = correlation
         )
+        if (_metricsFlow.value != newMetrics) {
+            _metricsFlow.value = newMetrics
+        }
     }
 
     fun reset() {
         sampleCount = 0L
+        framesSincePublish = 0
         sumL2 = 0.0
         sumR2 = 0.0
         sumLR = 0.0
@@ -224,7 +282,8 @@ class FidelityAnalyzer(
         midBandEnergy = 0.0
         currentBlockSum = 0.0
         currentBlockSamples = 0
-        blockRmsList.clear()
+        blockRmsCount = 0
+        blockRmsHead = 0
         prevL1 = 0f
         prevL2 = 0f
         prevR1 = 0f

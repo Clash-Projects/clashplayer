@@ -47,6 +47,7 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.isReturnDefaultValues = true
         // Off-device screenshots of composables (Robolectric native graphics + Roborazzi)
         unitTests.all {
             it.systemProperty("roborazzi.test.record", "true")

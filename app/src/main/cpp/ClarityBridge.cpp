@@ -3,8 +3,11 @@
 #include <cstdint>
 #include <algorithm>
 #include "DspProcessor.h"
+#include "LockFreeRingBuffer.h"
 
 using namespace clashplayer::audio;
+
+template class clashplayer::audio::LockFreeRingBuffer<float>;
 
 extern "C" {
 

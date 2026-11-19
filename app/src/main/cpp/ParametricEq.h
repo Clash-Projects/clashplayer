@@ -4,6 +4,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 namespace clashplayer::audio {
 
@@ -80,6 +83,19 @@ private:
         double a2{0.0};
     };
 
+    struct SimdCoefficients final {
+        float b0{1.0f};
+        float b1{0.0f};
+        float b2{0.0f};
+        float a1{0.0f};
+        float a2{0.0f};
+    };
+
+    struct alignas(16) SimdState final {
+        float z1[2]{0.0f, 0.0f};
+        float z2[2]{0.0f, 0.0f};
+    };
+
     struct Spec final {
         std::int32_t type{kPeaking};
         double frequency{1000.0};
@@ -90,19 +106,20 @@ private:
     static Coefficients design(const Spec& spec, double sampleRate) noexcept;
     static double magnitude(const Coefficients& c, double sampleRate, double frequency) noexcept;
     void syncConfiguration() noexcept;
+    void processStereoNeon(float* samples, std::size_t frames) noexcept;
 
     inline float tick(float input, std::size_t channel) noexcept {
-        double value = static_cast<double>(input);
+        float value = input;
         for (std::size_t i = 0; i < activeCount_; ++i) {
-            const Coefficients& c = coefficients_[i];
-            double& z1 = z1_[i][channel];
-            double& z2 = z2_[i][channel];
-            const double out = c.b0 * value + z1;
+            const SimdCoefficients& c = simdCoefficients_[i];
+            float& z1 = simdState_[i].z1[channel];
+            float& z2 = simdState_[i].z2[channel];
+            const float out = c.b0 * value + z1;
             z1 = c.b1 * value - c.a1 * out + z2;
             z2 = c.b2 * value - c.a2 * out;
             value = out;
         }
-        return static_cast<float>(value * preampGain_);
+        return value * static_cast<float>(preampGain_);
     }
 
     double sampleRate_{48000.0};
@@ -113,6 +130,8 @@ private:
     double preampGain_{1.0};
     std::size_t activeCount_{0};
     std::array<Coefficients, kMaxFilters> coefficients_{};
+    std::array<SimdCoefficients, kMaxFilters> simdCoefficients_{};
+    std::array<SimdState, kMaxFilters> simdState_{};
     std::array<std::array<double, kMaxChannels>, kMaxFilters> z1_{};
     std::array<std::array<double, kMaxChannels>, kMaxFilters> z2_{};
     std::array<std::int32_t, kMaxFilters> slotSource_{

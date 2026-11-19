@@ -14,6 +14,8 @@ namespace clashplayer::audio {
 // are monotonic so all capacity slots remain usable.
 template <typename T>
 class LockFreeRingBuffer final {
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+                  "LockFreeRingBuffer requires lock-free atomic uint64_t for real-time safety");
 public:
     explicit LockFreeRingBuffer(std::size_t capacity)
         : capacity_(std::max<std::size_t>(capacity, 2)),
@@ -27,22 +29,24 @@ public:
     [[nodiscard]] std::size_t availableToRead() const noexcept {
         const auto read = readIndex_.load(std::memory_order_relaxed);
         const auto write = writeIndex_.load(std::memory_order_acquire);
-        return static_cast<std::size_t>(write - read);
+        const auto diff = static_cast<std::size_t>(write - read);
+        return diff > capacity_ ? capacity_ : diff;
     }
 
     [[nodiscard]] std::size_t availableToWrite() const noexcept {
         const auto write = writeIndex_.load(std::memory_order_relaxed);
         const auto read = readIndex_.load(std::memory_order_acquire);
-        return capacity_ - static_cast<std::size_t>(write - read);
+        const auto diff = static_cast<std::size_t>(write - read);
+        return diff >= capacity_ ? 0 : capacity_ - diff;
     }
 
     std::size_t write(const T* source, std::size_t count) noexcept {
         if (source == nullptr || count == 0) return 0;
         const auto write = writeIndex_.load(std::memory_order_relaxed);
         const auto read = readIndex_.load(std::memory_order_acquire);
-        const auto writable = std::min(
-            count,
-            capacity_ - static_cast<std::size_t>(write - read));
+        const auto diff = static_cast<std::size_t>(write - read);
+        if (diff >= capacity_) return 0;
+        const auto writable = std::min(count, capacity_ - diff);
         copyIntoRing(source, writable, static_cast<std::size_t>(write % capacity_));
         writeIndex_.store(write + writable, std::memory_order_release);
         return writable;
@@ -63,10 +67,7 @@ public:
         const auto read = readIndex_.load(std::memory_order_relaxed);
         const auto write = writeIndex_.load(std::memory_order_acquire);
         const auto readable = std::min(count, static_cast<std::size_t>(write - read));
-        const auto offset = static_cast<std::size_t>(read % capacity_);
-        const auto first = std::min(readable, capacity_ - offset);
-        std::memcpy(destination, data_.get() + offset, first * sizeof(T));
-        std::memcpy(destination + first, data_.get(), (readable - first) * sizeof(T));
+        copyFromRing(destination, readable, static_cast<std::size_t>(read % capacity_));
         return readable;
     }
 
@@ -95,7 +96,7 @@ private:
         std::memcpy(data_.get(), source + first, (count - first) * sizeof(T));
     }
 
-    void copyFromRing(T* destination, std::size_t count, std::size_t offset) noexcept {
+    void copyFromRing(T* destination, std::size_t count, std::size_t offset) const noexcept {
         const auto first = std::min(count, capacity_ - offset);
         std::memcpy(destination, data_.get() + offset, first * sizeof(T));
         std::memcpy(destination + first, data_.get(), (count - first) * sizeof(T));

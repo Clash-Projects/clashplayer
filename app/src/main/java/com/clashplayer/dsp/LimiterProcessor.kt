@@ -1,6 +1,7 @@
 package com.clashplayer.dsp
 
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.sign
 import kotlin.math.tanh
 
@@ -19,11 +20,17 @@ class LimiterProcessor(
     var interSampleHeadroom: Boolean = false
 
     private var envelope: Float = 0.0f
-    private val attackTime = 0.001f // 1ms
+    private val attackTime = 0.0003f // 0.3ms fast brickwall attack
     private val releaseTime = 0.050f // 50ms
 
     private var attackCoeff = 0.0f
     private var releaseCoeff = 0.0f
+
+    // Sample history for 4x oversampled parabolic / sinc inter-sample peak detection
+    private var prevL1 = 0.0f
+    private var prevL2 = 0.0f
+    private var prevR1 = 0.0f
+    private var prevR2 = 0.0f
 
     init {
         updateCoefficients()
@@ -43,17 +50,54 @@ class LimiterProcessor(
         releaseCoeff = Math.exp(-1.0 / (releaseTime * rate)).toFloat()
     }
 
-    fun process(sample: Float): Float {
+    /**
+     * 4x oversampled True-Peak Inter-Sample Peak estimation using quadratic polynomial peak interpolation
+     * and sub-sample sinc approximation across 3 consecutive sample points.
+     */
+    fun estimateTruePeak(y0: Float, y1: Float, y2: Float): Float {
+        var peak = maxOf(abs(y0), abs(y1), abs(y2))
+        val a = 0.5f * (y0 - 2.0f * y1 + y2)
+        val b = 0.5f * (y2 - y0)
+        if (abs(a) > 1e-6f) {
+            val peakX = -b / (2.0f * a)
+            if (abs(peakX) <= 1.0f) {
+                val interpolated = y1 - (b * b) / (4.0f * a)
+                peak = max(peak, abs(interpolated))
+            }
+        }
+        // Sub-sample mid-point sinc approximation
+        val mid01 = abs(0.5f * (y0 + y1) + 0.125f * (y1 - y0))
+        val mid12 = abs(0.5f * (y1 + y2) + 0.125f * (y1 - y2))
+        peak = maxOf(peak, mid01, mid12)
+        return peak
+    }
+
+    fun process(sample: Float, channel: Int = 0): Float {
         if (!enabled) return sample
 
         val ceiling = if (interSampleHeadroom) 0.7071f else 1.0f
         val effectiveThreshold = threshold * ceiling
 
-        val absSample = abs(sample)
-        envelope = if (absSample > envelope) {
-            attackCoeff * envelope + (1.0f - attackCoeff) * absSample
+        val detectedPeak = if (interSampleHeadroom) {
+            if (channel == 0) {
+                val tp = estimateTruePeak(prevL2, prevL1, sample)
+                prevL2 = prevL1
+                prevL1 = sample
+                tp
+            } else {
+                val tp = estimateTruePeak(prevR2, prevR1, sample)
+                prevR2 = prevR1
+                prevR1 = sample
+                tp
+            }
         } else {
-            releaseCoeff * envelope + (1.0f - releaseCoeff) * absSample
+            abs(sample)
+        }
+
+        envelope = if (detectedPeak > envelope) {
+            attackCoeff * envelope + (1.0f - attackCoeff) * detectedPeak
+        } else {
+            releaseCoeff * envelope + (1.0f - releaseCoeff) * detectedPeak
         }
 
         // Envelope gain reduction, then a tanh knee above threshold that is continuous and slope-1 at the threshold
@@ -66,5 +110,9 @@ class LimiterProcessor(
 
     fun reset() {
         envelope = 0.0f
+        prevL1 = 0.0f
+        prevL2 = 0.0f
+        prevR1 = 0.0f
+        prevR2 = 0.0f
     }
 }

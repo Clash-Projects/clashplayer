@@ -157,4 +157,30 @@ class UsbAudioDriverTest {
         val frames = IntArray(1000) { p.nextPacketFrames() }
         assertEquals(48500, frames.sum())
     }
+
+    @Test
+    fun testFeedbackClockDriftWithinHalfPpm() {
+        val rates = intArrayOf(44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000)
+        for (sr in rates) {
+            val pps = 8000
+            val nominal = (sr.toLong() shl 16) / pps
+            val dacRate = sr * (1.0 + 0.4e-6)
+            val raw1616 = kotlin.math.round(dacRate / pps * 65536.0).toLong()
+            val q16 = IsoPacketizer.feedbackToQ16(raw1616, highSpeed = true, busFramesPerPacket = 1, nominalQ16 = nominal)
+            assertNotNull("Failed to lock rate $sr", q16)
+
+            val packetizer = IsoPacketizer(sr, pps, (sr / pps) * 2 + 10)
+            packetizer.applyFeedback(q16!!)
+
+            var totalFrames = 0L
+            val testSeconds = 1000
+            for (i in 0 until testSeconds * pps) {
+                totalFrames += packetizer.nextPacketFrames()
+            }
+            val actualRate = totalFrames.toDouble() / testSeconds
+            val targetRate = q16.toDouble() / 65536.0 * pps
+            val driftPpm = kotlin.math.abs(actualRate - targetRate) / targetRate * 1e6
+            assertTrue("Drift $driftPpm ppm exceeded 0.5 ppm for $sr Hz", driftPpm <= 0.5)
+        }
+    }
 }

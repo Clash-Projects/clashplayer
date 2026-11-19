@@ -187,13 +187,13 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         val bitstream = dec is DsdDecoder && (dec.useDop || dec.nativeDsd)
         // Pass every channel through when the DAC has room for them; otherwise a stereo downmix
         if (!bitstream) dec.outChannels = if (usb.channels >= dec.channels) dec.channels else 2
-        audioEngine.bitPerfect = true
-        audioEngine.bypassSoftwareVolume = !usb.hasHardwareVolume
+        audioEngine.bitPerfect = usb.exact
+        audioEngine.bypassSoftwareVolume = if (settings.bitXactMode && usb.exact) false else !usb.hasHardwareVolume
         audioEngine.visualizerFeed = !bitstream
         audioEngine.bypassChannels = dec.outChannels
         audioEngine.updateSampleRate(dec.sampleRate)
         outputManager.onTrackFormatChanged(dec.sampleRate, dec.bitDepth)
-        resampler = if (usb.sampleRate != dec.sampleRate) Resampler(dec.sampleRate, usb.sampleRate, dec.outChannels) else null
+        resampler = if (!audioEngine.bitPerfect && usb.sampleRate != dec.sampleRate) Resampler(dec.sampleRate, usb.sampleRate, dec.outChannels) else null
         if (!bitstream) pendingWarmupMs = settings.usbWarmupMs // DSD silence would need its own idle pattern
         applyOutputProfile()
     }
@@ -261,7 +261,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
 
         // 1. Own USB Audio driver: exclusive, any Android version, DAC clocked at the track's rate
-        outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, settings.usbResample)?.let { return useUsb(it, dec) }
+        outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, if (settings.bitXactMode) false else settings.usbResample)?.let { return useUsb(it, dec) }
         useDspPath(dec)
         val sampleRate = dec.sampleRate
         val bitDepth = dec.bitDepth
@@ -286,6 +286,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         val bitPerfect = outputManager.prepareOutput(mediaAttributes, sampleRate, bitDepth)
         outputEncoding = bitPerfect?.encoding ?: AudioFormat.ENCODING_PCM_FLOAT
         audioEngine.bitPerfect = bitPerfect != null
+        if (bitPerfect != null) {
+            audioEngine.bypassSoftwareVolume = false
+            resampler = null
+        }
 
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, outputEncoding)
 
@@ -301,6 +305,9 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             .setBufferSizeInBytes(minBuf * 4)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+        if (Build.VERSION.SDK_INT >= 23) {
+            outputManager.bitPerfectDevice?.let { audioTrack?.setPreferredDevice(it) }
+        }
         applyOutputProfile()
     }
 
@@ -536,14 +543,16 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     private fun startAudioLoop() {
         playbackJob?.cancel()
         playbackJob = serviceScope.launch(Dispatchers.Default) {
+            AudioOutputManager.setAudioThreadPriority()
             val bufferSize = 2048
             val floatBuffer = FloatArray(bufferSize)
             val pcmBuffer = java.nio.ByteBuffer.allocateDirect(bufferSize * 4 * 8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
             var dec = decoder ?: return@launch
-            var stretched = FloatArray(0)
-            var resampled = FloatArray(0)
-            var dsdBuffer = FloatArray(0)
+            var stretched = FloatArray(bufferSize * 4)
+            var resampled = FloatArray(bufferSize * 4)
+            var dsdBuffer = FloatArray(bufferSize * 16)
             val rawBuffer = ByteArray(16384)
+            val zeros = FloatArray(bufferSize)
             // Crossfade: the outgoing track keeps playing under the incoming one, which is already the current track
             var outgoing: PullBuffer? = null
             var xfadeFrames = 0
@@ -605,11 +614,11 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                     packPcm(data, count, AudioOutputManager.precisionBits(outputEncoding), pcmBuffer)
                     audioTrack?.write(pcmBuffer, pcmBuffer.remaining(), AudioTrack.WRITE_BLOCKING)
                 }
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                    audioTrack?.underrunCount?.let { underruns ->
-                        if (underruns > 0) {
-                            com.clashplayer.diagnostics.DiagnosticsManager.underrunCount = underruns.toLong()
-                        }
+                val at = audioTrack
+                if (at != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                    val underruns = at.underrunCount
+                    if (underruns > 0) {
+                        com.clashplayer.diagnostics.DiagnosticsManager.underrunCount = underruns.toLong()
                     }
                 }
                 return true
@@ -618,10 +627,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             fun silence(ms: Int): Boolean {
                 val ch = dec.outChannels
                 var frames = (dec.sampleRate.toLong() * ms / 1000).toInt()
-                val zeros = FloatArray(bufferSize - bufferSize % ch)
+                val chunk = bufferSize - (bufferSize % ch)
                 while (frames > 0 && isActive) {
-                    val n = minOf(frames, zeros.size / ch)
-                    zeros.fill(0f) // emit may dither in place
+                    val n = minOf(frames, chunk / ch)
+                    zeros.fill(0f, 0, n * ch) // emit may dither in place
                     if (!emit(zeros, n * ch)) return false
                     frames -= n
                 }
