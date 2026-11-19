@@ -58,7 +58,12 @@ class TrackDecoder(context: Context, uri: Uri) : AudioDecoder {
         var written = 0
         while (written + outCh <= out.size) {
             val buf = pending ?: nextOutput() ?: break
-            val bytesPerSample = if (outEncoding == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2
+            val bytesPerSample = when (outEncoding) {
+                AudioFormat.ENCODING_PCM_FLOAT -> 4
+                AudioFormat.ENCODING_PCM_32BIT -> 4
+                AudioFormat.ENCODING_PCM_24BIT_PACKED -> 3
+                else -> 2
+            }
             val frameBytes = bytesPerSample * channels
             while (written + outCh <= out.size && buf.remaining() >= frameBytes) {
                 for (c in 0 until channels) frame[c] = sample(buf)
@@ -81,8 +86,21 @@ class TrackDecoder(context: Context, uri: Uri) : AudioDecoder {
         return if (written == 0 && outputDone) -1 else written
     }
 
-    private fun sample(buf: ByteBuffer): Float =
-        if (outEncoding == AudioFormat.ENCODING_PCM_FLOAT) buf.float else buf.short / 32768f
+    private fun sample(buf: ByteBuffer): Float = when (outEncoding) {
+        AudioFormat.ENCODING_PCM_FLOAT -> {
+            val f = buf.float
+            if (f.isNaN() || f.isInfinite()) 0f else f
+        }
+        AudioFormat.ENCODING_PCM_32BIT -> buf.int / 2147483648.0f
+        AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
+            val b0 = buf.get().toInt() and 0xFF
+            val b1 = buf.get().toInt() and 0xFF
+            val b2 = buf.get().toInt() // sign-extended
+            val v = (b2 shl 16) or (b1 shl 8) or b0
+            v / 8388608.0f
+        }
+        else -> buf.short / 32768f
+    }
 
     private fun nextOutput(): ByteBuffer? {
         while (!outputDone) {

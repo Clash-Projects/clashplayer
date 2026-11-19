@@ -13,7 +13,7 @@ import kotlin.math.*
 class ClarityProcessor(
     private var sampleRate: Int = 44100
 ) {
-    var enabled: Boolean = true
+    var enabled: Boolean = false
         set(value) {
             field = value
             if (nativeHandle != 0L) {

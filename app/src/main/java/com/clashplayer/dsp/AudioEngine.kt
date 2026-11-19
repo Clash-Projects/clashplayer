@@ -262,14 +262,16 @@ class AudioEngine(
 
     private fun applyRampedGain(buffer: FloatArray, offset: Int, sampleCount: Int, target: Float) {
         // Per-sample ramp, so it works for any channel count (bypass mode may carry multichannel audio)
-        val start = if (currentMasterGain.isNaN()) target else currentMasterGain
-        val step = (target - start) / sampleCount.coerceAtLeast(1)
+        val safeTarget = if (target.isNaN() || target.isInfinite()) 1.0f else target
+        val start = if (currentMasterGain.isNaN() || currentMasterGain.isInfinite()) safeTarget else currentMasterGain
+        val step = (safeTarget - start) / sampleCount.coerceAtLeast(1)
         var g = start
         for (i in offset until offset + sampleCount) {
             g += step
-            buffer[i] *= g
+            val s = buffer[i]
+            buffer[i] = if (s.isNaN() || s.isInfinite()) 0f else s * g
         }
-        currentMasterGain = target
+        currentMasterGain = safeTarget
     }
 
     /**

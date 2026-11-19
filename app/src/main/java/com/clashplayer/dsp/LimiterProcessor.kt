@@ -74,6 +74,7 @@ class LimiterProcessor(
 
     fun process(sample: Float, channel: Int = 0): Float {
         if (!enabled) return sample
+        if (sample.isNaN() || sample.isInfinite()) return 0.0f
 
         val ceiling = if (interSampleHeadroom) 0.7071f else 1.0f
         val effectiveThreshold = threshold * ceiling
@@ -105,6 +106,7 @@ class LimiterProcessor(
         val mag = abs(reduced)
         if (mag <= effectiveThreshold) return reduced
         val headroom = ceiling - effectiveThreshold
+        if (headroom <= 1e-6f) return sign(reduced) * effectiveThreshold
         return sign(reduced) * (effectiveThreshold + headroom * tanh((mag - effectiveThreshold) / headroom))
     }
 

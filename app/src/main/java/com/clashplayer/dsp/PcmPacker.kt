@@ -13,7 +13,12 @@ fun packPcm(src: FloatArray, count: Int, bits: Int, out: ByteBuffer, offset: Int
     val min = -(1L shl (bits - 1))
     out.clear()
     for (i in 0 until count) {
-        val v = (src[offset + i] * scale).roundToLong().coerceIn(min, max)
+        val s = src[offset + i]
+        val v = if (s.isNaN() || s.isInfinite()) {
+            0L
+        } else {
+            (s.toDouble() * scale).roundToLong().coerceIn(min, max)
+        }
         for (b in 0 until bits / 8) out.put((v shr (8 * b)).toByte())
     }
     out.flip()

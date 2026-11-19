@@ -195,4 +195,17 @@ class DspFeaturesTest {
         val peak = buf.drop(48000).maxOf { abs(it) }
         assertTrue("peak $peak", peak <= 1.001f)
     }
+
+    @Test fun packPcmHandlesNanAndInfWithoutThrowing() {
+        val src = floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 0.5f, -0.5f)
+        val buf = ByteBuffer.allocate(src.size * 3).order(ByteOrder.LITTLE_ENDIAN)
+        // Must not throw Cannot round NaN value
+        packPcm(src, src.size, 24, buf)
+        assertEquals(src.size * 3, buf.limit())
+        // NaN, +Inf, -Inf must pack safely to zero
+        val b0 = buf.get().toInt()
+        val b1 = buf.get().toInt()
+        val b2 = buf.get().toInt()
+        assertEquals(0, b0 or b1 or b2)
+    }
 }

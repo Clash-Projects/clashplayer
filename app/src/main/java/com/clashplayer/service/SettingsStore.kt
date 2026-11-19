@@ -90,7 +90,7 @@ class SettingsStore(context: Context) {
             e.stereoProcessor.balance = j.optDouble("balance", 0.0).toFloat()
             e.stereoProcessor.forceMono = j.optBoolean("mono")
             j.optJSONArray("clarity")?.let { c ->
-                e.clarityProcessor.enabled = c.optBoolean(0, true)
+                e.clarityProcessor.enabled = c.optBoolean(0, false)
                 e.clarityProcessor.wetMix = c.optDouble(1, 1.0).toFloat()
                 e.clarityProcessor.stereoWidth = c.optDouble(2, 1.25).toFloat()
                 e.clarityProcessor.exciterAmount = c.optDouble(3, 0.18).toFloat()

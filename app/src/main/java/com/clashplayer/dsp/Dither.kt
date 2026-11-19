@@ -84,8 +84,13 @@ class Ditherer(var type: DitherType = DitherType.TRIANGULAR) {
         val min = -(1L shl (bits - 1))
         val h = type.filterFor(sampleRate)
         for (i in 0 until count) {
+            val s = buf[i]
+            if (s.isNaN() || s.isInfinite()) {
+                buf[i] = 0f
+                continue
+            }
             val c = (i % channels).coerceAtMost(MAX_CH - 1)
-            var v = buf[i] * scale
+            var v = s * scale
             if (h != null) {
                 val e = err[c]
                 var p = errPos[c]
