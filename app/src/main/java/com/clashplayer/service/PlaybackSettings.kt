@@ -26,4 +26,17 @@ class PlaybackSettings {
     @Volatile var usbResample = true
     /** USB direct: play this much silence after opening, for DACs that mute or distort their first moments. */
     @Volatile var usbWarmupMs = 0
+    /** USB direct: send DSD files natively when the DAC has a raw DSD mode (else DoP, else PCM). */
+    @Volatile var preferNativeDsd = true
+    /** Convert PCM tracks to DSD (sent as DoP), after the DSP chain. */
+    @Volatile var dsdRemaster = false
+    /** Remaster target: 64, 128 or 256 times 44.1 kHz. */
+    @Volatile var remasterMultiple = 64
+    /** Use 48 kHz-based DSD rates for 48 kHz-family tracks. */
+    @Volatile var remasterAllow48k = false
+    @Volatile var remasterGainDb = 0f
+    /** Bluetooth headsets usually control their own volume (absolute volume); DVC on top would double-attenuate. */
+    @Volatile var noDvcOnBluetooth = true
+    /** Bluetooth codec rate to request: 0 leaves it alone, -1 follows the track, else the rate in Hz. */
+    @Volatile var btCodecRate = 0
 }

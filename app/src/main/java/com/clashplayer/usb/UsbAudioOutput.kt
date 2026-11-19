@@ -54,6 +54,7 @@ class UsbAudioOutput private constructor(
     val channels get() = alt.channels
     val hasHardwareVolume get() = volumeUnit != null && volumeRange != null
     val classLabel get() = if (uac.uacVersion == 2) "UAC2" else "UAC1"
+    val isNativeDsd get() = alt.isRawDsd && alt.subslotBytes == 4
     val busLabel get() = if (highSpeed) "High-speed" else "Full-speed"
     val syncLabel get() = when {
         capture != null -> "Implicit feedback"
@@ -129,10 +130,40 @@ class UsbAudioOutput private constructor(
         carryLen -= offset
     }
 
+    private var rawCarry = ByteArray(0)
+    private var rawLen = 0
+
+    /**
+     * Native DSD: queues [count] bytes laid out as the DAC's 32-bit raw slots (per frame, 4 bytes per channel,
+     * earliest bit first). Only for an output opened with nativeDsd.
+     */
+    fun writeRaw(bytes: ByteArray, count: Int) {
+        if (rawLen + count > rawCarry.size) rawCarry = rawCarry.copyOf((rawLen + count) * 2)
+        System.arraycopy(bytes, 0, rawCarry, rawLen, count)
+        rawLen += count
+        var offset = 0
+        while (true) {
+            if (planFrames < 0) planUrb()
+            val needed = planFrames * bytesPerFrame
+            if (rawLen - offset < needed) break
+            urbBuffer.clear()
+            urbBuffer.put(rawCarry, offset, needed)
+            urbBuffer.flip()
+            for (p in 0 until packetsPerUrb) packetBytes[p] = plan[p] * bytesPerFrame
+            val rc = UsbIso.nativeWrite(handle, urbBuffer.array(), needed, packetBytes, packetsPerUrb)
+            if (rc < 0) throw IOException("USB isochronous submit failed (errno ${-rc}); DAC unplugged?")
+            offset += needed
+            planFrames = -1
+        }
+        System.arraycopy(rawCarry, offset, rawCarry, 0, rawLen - offset)
+        rawLen -= offset
+    }
+
     /** Drops everything queued but not yet played (seek), keeping the DAC clock running. */
     fun flush() {
         UsbIso.nativeFlush(handle)
         carryLen = 0
+        rawLen = 0
         planFrames = -1
     }
 
@@ -203,7 +234,7 @@ class UsbAudioOutput private constructor(
          * channels in a format holding [bitDepth] bits. If the DAC can't run at that rate it throws, unless
          * [allowResample] lets it pick the closest clean rate instead ([sampleRate] of the result tells which).
          */
-        fun open(manager: UsbManager, device: UsbDevice, sampleRate: Int, bitDepth: Int, channels: Int, allowResample: Boolean = false): UsbAudioOutput {
+        fun open(manager: UsbManager, device: UsbDevice, sampleRate: Int, bitDepth: Int, channels: Int, allowResample: Boolean = false, nativeDsd: Boolean = false): UsbAudioOutput {
             val conn = manager.openDevice(device) ?: throw IOException("Cannot open ${device.productName}")
             val claimed = mutableListOf<UsbInterface>()
             try {
@@ -238,14 +269,15 @@ class UsbAudioOutput private constructor(
                     else a.sampleRates.map { it..it } + listOfNotNull(a.rateRange)
                     ranges.flatMap { r -> if (r.first == r.last) listOf(r.first) else (STANDARD_RATES + sampleRate).filter { it in r } }
                 }
-                val pcmAlts = uac.playbackAlts.filter { it.isPcm && it.subslotBytes in 2..4 }
+                // Native DSD runs a raw-data alt at DSD rate / 32 with 32-bit slots; otherwise PCM alts only
+                val pcmAlts = uac.playbackAlts.filter { if (nativeDsd) it.isRawDsd && it.subslotBytes == 4 else it.isPcm && it.subslotBytes in 2..4 }
                 val altRates = pcmAlts.associateWith(ratesOf)
                 fun usableWith(min: Int, r: Int) = pcmAlts.filter { it.channels >= min && r in altRates.getValue(it) }
                 fun usableAt(r: Int) = usableWith(channels.coerceAtLeast(2), r).ifEmpty { usableWith(2, r) }
                 // All source channels if the DAC can take them, else stereo (the caller downmixes)
                 var rate = sampleRate
                 var usable = usableAt(rate)
-                if (usable.isEmpty() && allowResample) {
+                if (usable.isEmpty() && allowResample && !nativeDsd) {
                     rate = Resampler.pickRate(sampleRate, pcmAlts.filter { it.channels >= 2 }.flatMap { altRates.getValue(it) })
                         ?: throw IOException("DAC reports no sample rates")
                     usable = usableAt(rate)

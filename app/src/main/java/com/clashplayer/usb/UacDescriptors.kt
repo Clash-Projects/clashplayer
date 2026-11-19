@@ -33,6 +33,7 @@ data class UacAlt(
     val isPcm: Boolean,
     val isCapture: Boolean = false,
     val implicitFeedbackData: Boolean = false, // capture endpoint flagged as implicit feedback (usage 2)
+    val isRawDsd: Boolean = false, // UAC2 type I with bmFormats bit 31 (TYPE_I_RAW_DATA): native DSD
 )
 
 /** A feature unit fed by [sourceId], with the channels (0 = master) whose volume / mute are host-settable. */
@@ -80,7 +81,7 @@ object UacDescriptors {
         val selectors = mutableMapOf<Int, List<Int>>()
 
         var ifNum = -1; var alt = -1; var subclass = -1
-        var link = -1; var channels = 0; var subslot = 0; var bits = 0; var pcm = false
+        var link = -1; var channels = 0; var subslot = 0; var bits = 0; var pcm = false; var rawDsd = false
         var rates = emptyList<Int>(); var range: IntRange? = null
         var dataEp = -1; var dataMax = 0; var dataInterval = 1; var sync = 0; var synchAddr = 0; var dataUsage = 0
         var fbEp: Int? = null; var fbMax = 0
@@ -90,9 +91,9 @@ object UacDescriptors {
                 val capture = dataEp and 0x80 != 0
                 alts += UacAlt(ifNum, alt, link, channels, subslot, bits, dataEp, dataMax, dataInterval, sync,
                     if (capture) null else fbEp ?: synchAddr.takeIf { it and 0x80 != 0 }, fbMax, rates, range, null, pcm,
-                    capture, capture && dataUsage == 2)
+                    capture, capture && dataUsage == 2, rawDsd)
             }
-            link = -1; channels = 0; subslot = 0; bits = 0; pcm = false; rates = emptyList(); range = null
+            link = -1; channels = 0; subslot = 0; bits = 0; pcm = false; rawDsd = false; rates = emptyList(); range = null
             dataEp = -1; dataMax = 0; dataInterval = 1; sync = 0; synchAddr = 0; dataUsage = 0; fbEp = null; fbMax = 0
         }
 
@@ -143,6 +144,7 @@ object UacDescriptors {
                         0x01 -> if (version == 2) {
                             link = u8(i + 3)
                             pcm = u8(i + 5) == 1 && (u8(i + 6) and 1) != 0
+                            rawDsd = u8(i + 5) == 1 && (u8(i + 9) and 0x80) != 0
                             channels = u8(i + 10)
                         } else {
                             link = u8(i + 3)

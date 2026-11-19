@@ -21,7 +21,12 @@ class DsdDecoder(channel: FileChannel, private val owner: Closeable) : AudioDeco
     var useDop = false
         set(value) { field = value; if (value) outChannels = channels }
 
-    override val sampleRate get() = if (useDop) dopRate else pcm.outRate
+    /** Native DSD: the DAC's raw-data mode at DSD rate / 32; read with [readRaw] instead of [read]. */
+    var nativeDsd = false
+        set(value) { field = value; if (value) outChannels = channels }
+    val nativeRate = dsdRate / 32
+
+    override val sampleRate get() = if (nativeDsd) nativeRate else if (useDop) dopRate else pcm.outRate
     override val channels = src.channels
     override val bitDepth = 24
     override var outChannels = 2
@@ -60,6 +65,20 @@ class DsdDecoder(channel: FileChannel, private val owner: Closeable) : AudioDeco
             }
         }
         return produced * outCh
+    }
+
+    /** Fills [out] with whole 32-bit slots per channel (4 DSD bytes each, earliest first); returns bytes, or -1 at the end. */
+    fun readRaw(out: ByteArray): Int {
+        val frames = out.size / (4 * channels)
+        ensure(frames * 4)
+        val got = src.read(bytes, frames * 4) / 4
+        if (got == 0) return -1
+        var o = 0
+        for (f in 0 until got) for (c in 0 until channels) {
+            System.arraycopy(bytes[c], 4 * f, out, o, 4)
+            o += 4
+        }
+        return o
     }
 
     private fun ensure(n: Int) {

@@ -123,6 +123,11 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    override fun onStop() {
+        super.onStop()
+        playbackService?.saveSettings() // the process may be killed in the background without onDestroy
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         if (isBound) {

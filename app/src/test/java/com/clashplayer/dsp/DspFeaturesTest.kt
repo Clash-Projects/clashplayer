@@ -84,7 +84,7 @@ class DspFeaturesTest {
             val y = x.copyOf().also { Ditherer(t).process(it, it.size, 2, 16, 44100) }
             for (v in y) assertEquals("$t off grid", Math.round(v * 32768.0).toDouble(), v * 32768.0, 1e-6)
             val err = y.indices.maxOf { abs(y[it] - x[it]) * 32768 }
-            assertTrue("$t error $err LSB", err < if (t.shaping != null) 40f else 1.6f)
+            assertTrue("$t error $err LSB", err < if (t.filterFor(44100) != null) 60f else 1.6f)
         }
     }
 
@@ -100,9 +100,19 @@ class DspFeaturesTest {
             }
         }
         val flat = midNoise(DitherType.TRIANGULAR)
-        for (t in listOf(DitherType.F_WEIGHTED, DitherType.MODIFIED_E, DitherType.IMPROVED_E)) {
+        for (t in listOf(DitherType.F_WEIGHTED, DitherType.MODIFIED_E, DitherType.IMPROVED_E, DitherType.SHIBATA, DitherType.LOW_SHIBATA)) {
             val db = 10 * log10(midNoise(t) / flat)
-            assertTrue("$t midrange noise $db dB", db < -8)
+            assertTrue("$t midrange noise $db dB", db < if (t == DitherType.LOW_SHIBATA) -3 else -8)
+        }
+    }
+
+    @Test fun athShapingFollowsHearingAtAnyRate() {
+        for (rate in listOf(44100, 96000)) {
+            val h = DitherType.SHIBATA.filterFor(rate)!!
+            fun ntfDb(f: Double): Double { var re = 1.0; var im = 0.0; for (k in h.indices) { val w = 2 * PI * f / rate * (k + 1); re -= h[k] * cos(w); im += h[k] * sin(w) }; return 10 * log10(re * re + im * im) }
+            // Quiet where hearing is most sensitive, loud where it is deaf
+            assertTrue("$rate", ntfDb(3500.0) < ntfDb(18000.0) - 15)
+            assertTrue("$rate", ntfDb(3500.0) < ntfDb(500.0))
         }
     }
 

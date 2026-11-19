@@ -92,7 +92,8 @@ fun EqualizerStudio(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     settings: PlaybackSettings = PlaybackSettings(),
-    onReplayGainChanged: () -> Unit = {}
+    onReplayGainChanged: () -> Unit = {},
+    outputControls: OutputControls? = null
 ) {
     val eqState by audioEngine.equalizerStateFlow.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -148,7 +149,7 @@ fun EqualizerStudio(
                 onApplyPreset = { preset -> audioEngine.applyPreset(preset) }
             )
 
-            3 -> EngineTab(audioEngine, settings, onReplayGainChanged)
+            3 -> EngineTab(audioEngine, settings, onReplayGainChanged, outputControls)
 
             4 -> AudioOutputTab(
                 currentDriver = currentDriver,

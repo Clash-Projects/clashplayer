@@ -13,6 +13,10 @@ class AudioEngine(
     var sampleRate: Int = 44100
 ) {
     var dvcEnabled: Boolean = true
+    // Per-output overrides (device profile); the global switches above stay as the user set them
+    @Volatile var outputAllowsDvc = true
+    @Volatile var outputAllowsEq = true
+    @Volatile var outputHeadroom = true
     // Attenuation reserved for EQ/tone boosts when the system controls volume (DVC off); 0 disables it
     var dvcHeadroomDb: Float = 6.0f
     var volume: Float = 1.0f // 0.0 to 1.0
@@ -223,11 +227,14 @@ class AudioEngine(
      */
     fun computeEffectiveVolumeGain(): Float {
         // System volume does the attenuation; only reserve headroom so EQ boosts can't clip
-        if (!dvcEnabled) return 10.0.pow((replayGainDb - dvcHeadroomDb.coerceIn(0f, 24f)) / 20.0).toFloat()
+        if (!dvcEnabled || !outputAllowsDvc) {
+            val headroom = if (outputHeadroom && outputAllowsEq) dvcHeadroomDb.coerceIn(0f, 24f) else 0f
+            return 10.0.pow((replayGainDb - headroom) / 20.0).toFloat()
+        }
 
         var db = (volumeDb() ?: return 0.0f) + replayGainDb
         // Near full volume a boost would clip: give back exactly the part that would go over 0 dBFS
-        if (smoothGains) db -= (db + preampDb + eqPeakDb).coerceAtLeast(0f)
+        if (smoothGains) db -= (db + preampDb + if (outputAllowsEq) eqPeakDb else 0f).coerceAtLeast(0f)
         return 10.0.pow(db / 20.0).toFloat()
     }
 
@@ -270,8 +277,9 @@ class AudioEngine(
             updateAllFilters()
         }
         val parametricBands = parametricBands
+        val eqAllowed = outputAllowsEq
         val volGain = computeEffectiveVolumeGain()
-        val preampGain = 10.0.pow(preampDb / 20.0).toFloat()
+        val preampGain = if (eqAllowed) 10.0.pow(preampDb / 20.0).toFloat() else 1f
         val targetGain = volGain * preampGain
         val startGain = if (currentMasterGain.isNaN()) targetGain else currentMasterGain
         val frames = (sampleCount / 2).coerceAtLeast(1)
@@ -293,7 +301,7 @@ class AudioEngine(
             var right = buffer[i + 1] * g
 
             // Apply Tone Controls (Bass / Treble)
-            if (toneEnabled) {
+            if (toneEnabled && eqAllowed) {
                 left = bassFilter.processSample(left, 0)
                 right = bassFilter.processSample(right, 1)
                 left = trebleFilter.processSample(left, 0)
@@ -301,7 +309,7 @@ class AudioEngine(
             }
 
             // Apply Equalizer
-            if (equalizerEnabled) {
+            if (equalizerEnabled && eqAllowed) {
                 if (isParametricMode) {
                     for (bIdx in parametricBands.indices) {
                         val b = parametricBands[bIdx]

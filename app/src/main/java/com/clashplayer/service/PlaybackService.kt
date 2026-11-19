@@ -11,6 +11,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.clashplayer.dsd.DsdRemaster
 import com.clashplayer.dsp.AudioEngine
 import com.clashplayer.dsp.ReplayGainInfo
 import com.clashplayer.dsp.ReplayGainMode
@@ -77,7 +78,16 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     override fun onCreate() {
         super.onCreate()
         outputManager = AudioOutputManager(this)
+        store = SettingsStore(this)
+        store.load(audioEngine, settings)?.let(outputManager::selectDriver)
+        audioManager.registerAudioDeviceCallback(deviceCallback, null)
         createNotificationChannel()
+    }
+
+    private lateinit var store: SettingsStore
+    private val deviceCallback = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>) = applyOutputProfile()
+        override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>) = applyOutputProfile()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -97,6 +107,8 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     @Volatile private var decoder: AudioDecoder? = null
     // Converts to the USB DAC's rate when it can't run at the track's own
     @Volatile private var resampler: Resampler? = null
+    @Volatile private var remaster: DsdRemaster? = null
+    @Volatile private var nativeOut: NativeAudioOutput? = null
     @Volatile private var pendingWarmupMs = 0
     @Volatile private var fadingOut = false
     private var pauseGen = 0
@@ -170,51 +182,105 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private fun useUsb(usb: com.clashplayer.usb.UsbAudioOutput, dec: AudioDecoder) {
         usbOutput = usb
+        val bitstream = dec is DsdDecoder && (dec.useDop || dec.nativeDsd)
         // Pass every channel through when the DAC has room for them; otherwise a stereo downmix
-        if (!(dec is DsdDecoder && dec.useDop)) dec.outChannels = if (usb.channels >= dec.channels) dec.channels else 2
+        if (!bitstream) dec.outChannels = if (usb.channels >= dec.channels) dec.channels else 2
         audioEngine.bitPerfect = true
         audioEngine.bypassSoftwareVolume = !usb.hasHardwareVolume
-        audioEngine.visualizerFeed = !(dec is DsdDecoder && dec.useDop)
+        audioEngine.visualizerFeed = !bitstream
         audioEngine.bypassChannels = dec.outChannels
         audioEngine.updateSampleRate(dec.sampleRate)
         outputManager.onTrackFormatChanged(dec.sampleRate, dec.bitDepth)
         resampler = if (usb.sampleRate != dec.sampleRate) Resampler(dec.sampleRate, usb.sampleRate, dec.outChannels) else null
-        if (!(dec is DsdDecoder && dec.useDop)) pendingWarmupMs = settings.usbWarmupMs // DoP silence would need DSD markers
+        if (!bitstream) pendingWarmupMs = settings.usbWarmupMs // DSD silence would need its own idle pattern
+        applyOutputProfile()
+    }
+
+    /** DSP path (stereo, processed) setup shared by every non-bit-perfect output. */
+    private fun useDspPath(dec: AudioDecoder) {
+        audioEngine.bitPerfect = false
+        audioEngine.bypassSoftwareVolume = false
+        audioEngine.visualizerFeed = true
+        audioEngine.bypassChannels = 2
+        dec.outChannels = 2
+        audioEngine.updateSampleRate(dec.sampleRate)
+        outputManager.onTrackFormatChanged(dec.sampleRate, dec.bitDepth)
     }
 
     private fun initOutput(dec: AudioDecoder) {
         audioTrack?.release()
         audioTrack = null
+        nativeOut?.close()
+        nativeOut = null
         closeUsbOutput()
         resampler = null
+        remaster = null
         pendingWarmupMs = 0
         val retry: () -> Unit = { serviceScope.launch(Dispatchers.Main) { reopenOutput() } }
+        val usbProfile = outputManager.attachedUsbName()?.let { store.profiles[OutputDevice.usb(it).key] } ?: OutputProfile()
 
-        // DSD: DoP carries it bit-exact, but needs DSD/16 Hz at >= 24 bits on every channel and the DAC's own
-        // volume control (attenuating DoP in software would destroy it). Otherwise convert to PCM.
+        // DSD is never attenuated in software (that would destroy it), so bitstream modes need the DAC's own volume
         if (dec is DsdDecoder) {
-            val dop = outputManager.openUsbDirect(dec.dopRate, 24, dec.channels, retry)
-            if (dop != null && dop.exact && dop.hasHardwareVolume && dop.channels >= dec.channels) {
-                dec.useDop = true
-                return useUsb(dop, dec)
-            }
-            dop?.close()
-            outputManager.onUsbDirectClosed()
             dec.useDop = false
+            dec.nativeDsd = false
+            if (settings.preferNativeDsd) {
+                val raw = outputManager.openUsbDirect(dec.nativeRate, 32, dec.channels, retry, nativeDsd = true)
+                if (raw != null && raw.isNativeDsd && raw.exact && raw.hasHardwareVolume && raw.channels >= dec.channels) {
+                    dec.nativeDsd = true
+                    return useUsb(raw, dec)
+                }
+                raw?.close()
+                outputManager.onUsbDirectClosed()
+            }
+            if (usbProfile.allowDop) {
+                val dop = outputManager.openUsbDirect(dec.dopRate, 24, dec.channels, retry)
+                if (dop != null && dop.exact && dop.hasHardwareVolume && dop.channels >= dec.channels) {
+                    dec.useDop = true
+                    return useUsb(dop, dec)
+                }
+                dop?.close()
+                outputManager.onUsbDirectClosed()
+            }
+        }
+
+        // PCM remastered to DSD: DSP runs first, volume included, then the modulator feeds DoP
+        if (settings.dsdRemaster && usbProfile.allowDop) {
+            val dsdRate = DsdRemaster.dsdRateFor(settings.remasterMultiple, dec.sampleRate, settings.remasterAllow48k)
+            val usb = outputManager.openUsbDirect(dsdRate / 16, 24, 2, retry)
+            if (usb != null && usb.exact && usb.channels >= 2) {
+                useDspPath(dec)
+                usbOutput = usb
+                remaster = DsdRemaster(dec.sampleRate, dsdRate, 2, settings.remasterGainDb)
+                applyOutputProfile()
+                return
+            }
+            usb?.close()
+            outputManager.onUsbDirectClosed()
         }
 
         // 1. Own USB Audio driver: exclusive, any Android version, DAC clocked at the track's rate
         outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, settings.usbResample)?.let { return useUsb(it, dec) }
-        audioEngine.bypassSoftwareVolume = false
-        audioEngine.visualizerFeed = true
-        audioEngine.bypassChannels = 2
-        dec.outChannels = 2 // the DSP chain and AudioTrack path are stereo
-        audioEngine.updateSampleRate(dec.sampleRate)
-        outputManager.onTrackFormatChanged(dec.sampleRate, dec.bitDepth)
+        useDspPath(dec)
         val sampleRate = dec.sampleRate
         val bitDepth = dec.bitDepth
 
-        // 2. Android 14+ bit-perfect mixer, 3. normal mixed output
+        // 2. Native drivers when chosen
+        val api = when (outputManager.selectedDriver.value) {
+            AudioDriverType.AAUDIO -> NativeAudioOutput.AAUDIO
+            AudioDriverType.OPENSL_ES -> NativeAudioOutput.OPENSL
+            else -> 0
+        }
+        if (api != 0) {
+            nativeOut = NativeAudioOutput.open(api, sampleRate, 2)
+            if (nativeOut != null) {
+                outputEncoding = AudioFormat.ENCODING_PCM_FLOAT
+                applyOutputProfile()
+                return
+            }
+            android.util.Log.w(TAG, "Native output $api refused $sampleRate Hz; using AudioTrack")
+        }
+
+        // 3. Android 14+ bit-perfect mixer, 4. normal mixed output
         val bitPerfect = outputManager.prepareOutput(mediaAttributes, sampleRate, bitDepth)
         outputEncoding = bitPerfect?.encoding ?: AudioFormat.ENCODING_PCM_FLOAT
         audioEngine.bitPerfect = bitPerfect != null
@@ -233,7 +299,51 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             .setBufferSizeInBytes(minBuf * 4)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+        applyOutputProfile()
     }
+
+    private val _currentOutput = MutableStateFlow(OutputDevice.Speaker)
+    /** Device audio is going to now; its profile (if any) is applied. */
+    val currentOutput: StateFlow<OutputDevice> = _currentOutput.asStateFlow()
+    private val _bluetoothCodecResult = MutableStateFlow<String?>(null)
+    val bluetoothCodecResult: StateFlow<String?> = _bluetoothCodecResult.asStateFlow()
+    private var lastBtRequest = 0
+
+    private fun detectOutput(): OutputDevice {
+        if (usbOutput != null) return OutputDevice.usb(outputManager.attachedUsbName())
+        audioTrack?.routedDevice?.let { return OutputDevice.of(it) }
+        return OutputDevice.guess(audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS))
+    }
+
+    /** Applies the current device's overrides to the engine, and the Bluetooth codec request if set. */
+    fun applyOutputProfile() {
+        val device = detectOutput()
+        _currentOutput.value = device
+        val p = store.profiles[device.key] ?: OutputProfile()
+        audioEngine.outputAllowsDvc = !p.noDvc && !(device.bluetooth && settings.noDvcOnBluetooth)
+        audioEngine.outputAllowsEq = !p.noEqTone
+        audioEngine.outputHeadroom = !p.noHeadroom
+        val btRate = when (val r = settings.btCodecRate) {
+            0 -> 0
+            -1 -> decoder?.sampleRate?.let { sr -> if (sr in listOf(44100, 48000, 88200, 96000)) sr else if (sr % 44100 == 0) 88200 else 96000 } ?: 0
+            else -> r
+        }
+        if (device.bluetooth && btRate != 0 && btRate != lastBtRequest) {
+            lastBtRequest = btRate
+            BluetoothCodec.request(this, btRate) { _bluetoothCodecResult.value = it }
+        }
+        if (!device.bluetooth) lastBtRequest = 0
+    }
+
+    /** Stores (or with null, removes) the overrides for [device]. Output-path options apply from the next track. */
+    fun setProfile(device: OutputDevice, profile: OutputProfile?) {
+        if (profile == null) store.profiles.remove(device.key) else store.profiles[device.key] = profile
+        applyOutputProfile()
+    }
+
+    fun profileFor(device: OutputDevice): OutputProfile? = store.profiles[device.key]
+
+    fun saveSettings() = store.save(audioEngine, settings, outputManager.selectedDriver.value)
 
     private val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
     private val focusRequest by lazy {
@@ -256,6 +366,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         if (fadeApplies()) { audioEngine.fadeTo(0f, 0); audioEngine.fadeTo(1f, settings.fadeMs) } else audioEngine.fadeTo(1f, 0)
 
         audioTrack?.play()
+        nativeOut?.start()
         startAudioLoop()
         startProgressTracker()
     }
@@ -274,10 +385,20 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             else -> "${track?.format ?: "PCM"} ${dec.bitDepth}/${formatKhz(dec.sampleRate)}"
         }
         usbOutput?.let { usb ->
-            val dop = dec is DsdDecoder && dec.useDop
+            val rm = remaster
+            val mode = when {
+                rm != null -> "PCM→DSD${rm.dsdRate / 44100} DoP"
+                dec is DsdDecoder && dec.nativeDsd -> "Native DSD"
+                dec is DsdDecoder && dec.useDop -> "DoP"
+                dec is DsdDecoder -> "DSD→PCM"
+                resampler != null -> "Resampled"
+                else -> "PCM"
+            }
             return OutputClock(source, "USB ${usb.classLabel} direct", usb.sampleRate, usb.measuredRateHz,
-                usb.alt.bitResolution, usb.channels, "${usb.syncLabel} · ${usb.busLabel}", usb.exact,
-                if (dop) "DoP" else if (dec is DsdDecoder) "DSD→PCM" else if (resampler != null) "Resampled" else "PCM")
+                usb.alt.bitResolution, usb.channels, "${usb.syncLabel} · ${usb.busLabel}", usb.exact && rm == null, mode)
+        }
+        nativeOut?.let { n ->
+            return OutputClock(source, "${n.label} output", n.sampleRate, null, 32, 2, "System clock", false, "DSP 64-bit")
         }
         val at = audioTrack ?: return OutputClock.Idle
         // Measured consumption rate from successive hardware timestamps
@@ -338,12 +459,13 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             val gen = ++pauseGen
             serviceScope.launch(Dispatchers.Main) {
                 withTimeoutOrNull(settings.fadeMs + 500L) { job.join() }
-                if (gen == pauseGen && !_isPlaying.value) { fadingOut = false; job.cancel(); audioTrack?.stop() }
+                if (gen == pauseGen && !_isPlaying.value) { fadingOut = false; job.cancel(); audioTrack?.stop(); nativeOut?.pause() }
             }
         } else {
             fadingOut = false
             job?.cancel()
             audioTrack?.pause()
+            nativeOut?.pause()
         }
     }
 
@@ -372,7 +494,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             runBlocking { playbackJob?.cancelAndJoin() }
             decoder?.seekTo(target) // loop is stopped, so this thread may touch the decoder
             audioTrack?.flush()
+            nativeOut?.flush()
             usbOutput?.flush()
+            remaster?.reset()
+            resampler?.reset()
         }
     }
 
@@ -413,6 +538,8 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             var dec = decoder ?: return@launch
             var stretched = FloatArray(0)
             var resampled = FloatArray(0)
+            var dsdBuffer = FloatArray(0)
+            val rawBuffer = ByteArray(16384)
             // Crossfade: the outgoing track keeps playing under the incoming one, which is already the current track
             var outgoing: PullBuffer? = null
             var xfadeFrames = 0
@@ -432,15 +559,29 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                     data = resampled
                 }
                 if (count == 0) return true
+                val rm = remaster
+                if (rm != null) {
+                    val need = rm.maxOut(count)
+                    if (dsdBuffer.size < need) dsdBuffer = FloatArray(need)
+                    count = rm.process(data, count, dsdBuffer)
+                    data = dsdBuffer
+                    if (count == 0) return true
+                }
+                nativeOut?.let { out ->
+                    return try { out.write(data, count); true } catch (e: java.io.IOException) {
+                        android.util.Log.w(TAG, "Native output failed", e); false
+                    }
+                }
                 val usb = usbOutput
                 if (usb != null) {
                     // Untouched samples go out as they are; scaled or resampled ones get dithered to the DAC's depth
-                    if (resampler != null || (audioEngine.bypassSoftwareVolume && audioEngine.volumeDb() != 0f)) {
+                    if (rm == null && (resampler != null || (audioEngine.bypassSoftwareVolume && audioEngine.volumeDb() != 0f))) {
                         audioEngine.ditherer.process(data, count, ch, usb.alt.bitResolution, usb.sampleRate)
                     }
                     return try {
-                        if (usb.hasHardwareVolume) usb.setVolumeDb(audioEngine.volumeDb())
-                        usb.write(data, count, ch)
+                        // Remastered DSD already carries the volume; keep the DAC at unity
+                        if (usb.hasHardwareVolume) usb.setVolumeDb(if (rm != null) 0f else audioEngine.volumeDb())
+                        usb.write(data, count, if (rm != null) 2 else ch)
                         true
                     } catch (e: java.io.IOException) {
                         // DAC unplugged or stalled: reopen on whatever output is left, from outside this job
@@ -481,8 +622,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                         pendingSeekMs = -1L
                         dec.seekTo(seek)
                         audioTrack?.pause(); audioTrack?.flush(); audioTrack?.play()
+                        nativeOut?.let { it.pause(); it.flush(); it.start() }
                         usbOutput?.flush() // drop queued packets so the new position is heard at once
                         resampler?.reset()
+                        remaster?.reset()
                         audioEngine.tempoProcessor.reset()
                         outgoing?.close(); outgoing = null; xfadeFrames = 0
                         if (fadeApplies()) { audioEngine.fadeTo(0f, 0); audioEngine.fadeTo(1f, settings.seekFadeMs) }
@@ -509,7 +652,8 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                         }
                     }
 
-                    val count = dec.read(floatBuffer)
+                    val rawDsd = (dec as? DsdDecoder)?.nativeDsd == true
+                    val count = if (rawDsd) (dec as DsdDecoder).readRaw(rawBuffer) else dec.read(floatBuffer)
                     if (count < 0) {
                         // Gapless: same output format, so hand the open output straight to the next track
                         val next = if (settings.gapless) openNext(dec) else null
@@ -526,6 +670,20 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                         break
                     }
                     if (count == 0) continue
+
+                    if (rawDsd) {
+                        val usb = usbOutput ?: break
+                        try {
+                            usb.setVolumeDb(audioEngine.volumeDb())
+                            usb.writeRaw(rawBuffer, count)
+                        } catch (e: java.io.IOException) {
+                            android.util.Log.w(TAG, "USB output failed", e)
+                            outputManager.usbDirectSuspended = true
+                            serviceScope.launch(Dispatchers.Main) { reopenOutput() }
+                            break
+                        }
+                        continue
+                    }
 
                     if (xfadeFrames > 0) {
                         val got = outgoing?.take(mixBuffer, count) ?: 0
@@ -618,7 +776,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             (next !is DsdDecoder || next.dsdRate == (cur as DsdDecoder).dsdRate)))
         if (!fits) { next.close(); return null }
         next.outChannels = cur.outChannels
-        if (next is DsdDecoder) next.useDop = (cur as DsdDecoder).useDop
+        if (next is DsdDecoder) { next.useDop = (cur as DsdDecoder).useDop; next.nativeDsd = cur.nativeDsd }
         return next to idx
     }
 
@@ -734,7 +892,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     override fun onDestroy() {
         super.onDestroy()
         runBlocking { playbackJob?.cancelAndJoin() } // the loop may be inside a USB write
+        saveSettings()
+        audioManager.unregisterAudioDeviceCallback(deviceCallback)
         closeUsbOutput()
+        nativeOut?.close()
         progressJob?.cancel()
         sleepTimerJob?.cancel()
         serviceScope.cancel()

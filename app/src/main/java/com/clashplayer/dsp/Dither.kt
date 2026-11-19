@@ -3,8 +3,11 @@ package com.clashplayer.dsp
 import java.util.Random
 import kotlin.math.roundToLong
 
-/** Dither for integer outputs. Shaped types use 44.1 kHz error-feedback filters and fall back to triangular elsewhere. */
-enum class DitherType(val label: String, internal val shaping: DoubleArray? = null) {
+/**
+ * Dither for integer outputs. The fixed shaped types use 44.1 kHz error-feedback filters (triangular elsewhere);
+ * the threshold-of-hearing types are designed for the actual sample rate.
+ */
+enum class DitherType(val label: String, internal val shaping: DoubleArray? = null, internal val athOrder: Int = 0, internal val athRangeDb: Double = 0.0) {
     NONE("None"),
     RECTANGULAR("Rectangular"),
     TRIANGULAR("Triangular"),
@@ -12,6 +15,51 @@ enum class DitherType(val label: String, internal val shaping: DoubleArray? = nu
     F_WEIGHTED("F-weighted", doubleArrayOf(2.412, -3.370, 3.937, -4.174, 3.353, -2.205, 1.281, -0.569, 0.0847)),
     MODIFIED_E("Modified-E", doubleArrayOf(1.662, -1.263, 0.4827, -0.2913, 0.1268, -0.1124, 0.03252, -0.01265, -0.03524)),
     IMPROVED_E("Improved-E", doubleArrayOf(2.847, -4.685, 6.214, -7.184, 6.639, -5.032, 3.263, -1.632, 0.4191)),
+    SHIBATA("Shibata", athOrder = 20, athRangeDb = 30.0),
+    LOW_SHIBATA("Low Shibata", athOrder = 12, athRangeDb = 15.0);
+
+    /** Error-feedback coefficients for [sampleRate], or null for plain dither. */
+    internal fun filterFor(sampleRate: Int): DoubleArray? = when {
+        athOrder > 0 -> athCache.getOrPut(name + sampleRate) { athShaping(sampleRate, athOrder, athRangeDb) }
+        sampleRate == 44100 || sampleRate == 48000 -> shaping
+        else -> null
+    }
+
+    private companion object {
+        val athCache = java.util.concurrent.ConcurrentHashMap<String, DoubleArray>()
+    }
+}
+
+/** Absolute threshold of hearing in dB SPL (Terhardt), [f] in Hz. */
+internal fun athDb(f: Double): Double {
+    val k = maxOf(f, 20.0) / 1000
+    return 3.64 * Math.pow(k, -0.8) - 6.5 * Math.exp(-0.6 * (k - 3.3) * (k - 3.3)) + 1e-3 * k * k * k * k
+}
+
+/**
+ * Noise-shaping filter whose noise spectrum follows the threshold of hearing, limited to [rangeDb] above its
+ * minimum: an all-pole (LPC) fit to the inverse target gives a minimum-phase A(z) with |A|^2 proportional to it.
+ */
+internal fun athShaping(sampleRate: Int, order: Int, rangeDb: Double): DoubleArray {
+    val n = 1024
+    val ath = DoubleArray(n) { athDb((it + 0.5) * sampleRate / 2.0 / n) }
+    val floor = ath.min()
+    val inv = DoubleArray(n) { Math.pow(10.0, -(ath[it] - floor).coerceAtMost(rangeDb) / 10) }
+    val r = DoubleArray(order + 1) { k -> (0 until n).sumOf { inv[it] * Math.cos(Math.PI * (it + 0.5) / n * k) } }
+    r[0] *= 1 + 1e-9 // tiny white-noise floor keeps the recursion well conditioned
+    // Levinson-Durbin: A(z) = 1 + a1 z^-1 + ...
+    val a = DoubleArray(order + 1).also { it[0] = 1.0 }
+    var e = r[0]
+    for (i in 1..order) {
+        var acc = r[i]
+        for (j in 1 until i) acc += a[j] * r[i - j]
+        val k = -acc / e
+        val prev = a.copyOf()
+        for (j in 1 until i) a[j] = prev[j] + k * prev[i - j]
+        a[i] = k
+        e *= 1 - k * k
+    }
+    return DoubleArray(order) { -a[it + 1] } // NTF = 1 - sum(h z^-k)
 }
 
 /**
@@ -21,7 +69,7 @@ enum class DitherType(val label: String, internal val shaping: DoubleArray? = nu
 class Ditherer(var type: DitherType = DitherType.TRIANGULAR) {
     private val random = Random(0x5EED)
     private val lastRand = FloatArray(MAX_CH)
-    private val err = Array(MAX_CH) { DoubleArray(9) }
+    private val err = Array(MAX_CH) { DoubleArray(24) }
     private val errPos = IntArray(MAX_CH)
 
     fun reset() {
@@ -34,7 +82,7 @@ class Ditherer(var type: DitherType = DitherType.TRIANGULAR) {
         val scale = (1L shl (bits - 1)).toDouble()
         val max = (1L shl (bits - 1)) - 1
         val min = -(1L shl (bits - 1))
-        val h = type.shaping?.takeIf { sampleRate == 44100 || sampleRate == 48000 }
+        val h = type.filterFor(sampleRate)
         for (i in 0 until count) {
             val c = (i % channels).coerceAtMost(MAX_CH - 1)
             var v = buf[i] * scale

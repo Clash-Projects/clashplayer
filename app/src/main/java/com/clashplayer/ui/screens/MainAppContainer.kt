@@ -109,7 +109,10 @@ fun MainAppContainer(
                 onDriverSelected = { service.switchAudioDriver(it) },
                 onBack = { selectedTab = NavTab.HOME },
                 settings = service.settings,
-                onReplayGainChanged = service::refreshReplayGain
+                onReplayGainChanged = service::refreshReplayGain,
+                outputControls = remember(service) {
+                    OutputControls(service.currentOutput, service.bluetoothCodecResult, service::profileFor, service::setProfile, service::applyOutputProfile)
+                }
             )
             NavTab.VISUALIZER -> VisualizerScreen(
                 audioEngine = audioEngine,
