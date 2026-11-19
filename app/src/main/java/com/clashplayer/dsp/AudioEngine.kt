@@ -73,6 +73,8 @@ class AudioEngine(
 
     val clarityProcessor = ClarityProcessor(sampleRate)
     val stereoProcessor = StereoProcessor()
+    val binauralSpatializer = BinauralSpatializer(sampleRate)
+    val fidelityAnalyzer = FidelityAnalyzer(sampleRate)
     val reverbProcessor = ReverbProcessor(sampleRate)
     val limiterProcessor = LimiterProcessor(sampleRate)
     val compressor = CompressorProcessor(sampleRate)
@@ -120,6 +122,8 @@ class AudioEngine(
             bassFilter.updateSampleRate(newRate)
             trebleFilter.updateSampleRate(newRate)
             clarityProcessor.updateSampleRate(newRate)
+            binauralSpatializer.updateSampleRate(newRate)
+            fidelityAnalyzer.updateSampleRate(newRate)
             graphicFilters.forEach { it.updateSampleRate(newRate) }
             parametricFilters.forEach { it.updateSampleRate(newRate) }
             reverbProcessor.updateSampleRate(newRate)
@@ -278,6 +282,7 @@ class AudioEngine(
                 }
                 updateFftAndWaveform()
             }
+            fidelityAnalyzer.feed(buffer, offset, sampleCount)
             return
         }
         if (filtersDirty) {
@@ -349,6 +354,13 @@ class AudioEngine(
             left = stereoTemp[0]
             right = stereoTemp[1]
 
+            // Binaural Room & HRTF Spatializer (Neumann KU 100 dummy head + studio room ambience)
+            if (binauralSpatializer.enabled) {
+                binauralSpatializer.process(left, right, stereoTemp)
+                left = stereoTemp[0]
+                right = stereoTemp[1]
+            }
+
             // Reverb
             reverbProcessor.process(left, right, stereoTemp)
             left = stereoTemp[0]
@@ -379,6 +391,31 @@ class AudioEngine(
         }
 
         updateFftAndWaveform()
+        fidelityAnalyzer.feed(buffer, offset, sampleCount)
+    }
+
+    fun setBinauralEnabled(enabled: Boolean) {
+        binauralSpatializer.enabled = enabled
+    }
+
+    fun setBinauralRoomAmbience(ambience: Float) {
+        binauralSpatializer.roomAmbience = ambience
+    }
+
+    fun setBinauralSoundstageWidth(width: Float) {
+        binauralSpatializer.soundstageWidth = width
+    }
+
+    fun setBinauralItdMicros(micros: Float) {
+        binauralSpatializer.itdMicros = micros
+    }
+
+    fun setBinauralDirectMix(mix: Float) {
+        binauralSpatializer.directMix = mix
+    }
+
+    fun setInterSampleHeadroomEnabled(enabled: Boolean) {
+        limiterProcessor.interSampleHeadroom = enabled
     }
 
     fun setClarityEnabled(enabled: Boolean) {

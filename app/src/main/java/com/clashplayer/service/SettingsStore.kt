@@ -50,6 +50,14 @@ class SettingsStore(context: Context) {
             put("reverb", JSONArray(listOf(e.reverbProcessor.enabled, e.reverbProcessor.roomSize, e.reverbProcessor.damping, e.reverbProcessor.wetMix)))
             put("comp", JSONArray(listOf(e.compressor.enabled, e.compressor.thresholdDb, e.compressor.ratio, e.compressor.makeupDb)))
             put("limiter", e.limiterProcessor.enabled)
+            put("ispHeadroom", e.limiterProcessor.interSampleHeadroom)
+            put("binaural", JSONArray(listOf(
+                e.binauralSpatializer.enabled,
+                e.binauralSpatializer.roomAmbience.toDouble(),
+                e.binauralSpatializer.soundstageWidth.toDouble(),
+                e.binauralSpatializer.itdMicros.toDouble(),
+                e.binauralSpatializer.directMix.toDouble()
+            )))
             put("dither", e.ditherer.type.name)
             put("tempo", e.tempoProcessor.tempo.toDouble())
             val eq = e.equalizerStateFlow.value
@@ -97,6 +105,14 @@ class SettingsStore(context: Context) {
                 e.compressor.ratio = c.getDouble(2).toFloat(); e.compressor.makeupDb = c.getDouble(3).toFloat()
             }
             e.limiterProcessor.enabled = j.optBoolean("limiter", true)
+            e.limiterProcessor.interSampleHeadroom = j.optBoolean("ispHeadroom", true)
+            j.optJSONArray("binaural")?.let { b ->
+                e.binauralSpatializer.enabled = b.optBoolean(0, false)
+                e.binauralSpatializer.roomAmbience = b.optDouble(1, 0.35).toFloat()
+                e.binauralSpatializer.soundstageWidth = b.optDouble(2, 1.15).toFloat()
+                e.binauralSpatializer.itdMicros = b.optDouble(3, 280.0).toFloat()
+                e.binauralSpatializer.directMix = b.optDouble(4, 0.85).toFloat()
+            }
             DitherType.entries.firstOrNull { it.name == j.optString("dither") }?.let { e.ditherer.type = it }
             e.tempoProcessor.tempo = j.optDouble("tempo", 1.0).toFloat()
             j.optJSONObject("eq")?.let { q ->
@@ -128,10 +144,12 @@ class SettingsStore(context: Context) {
         val BOOLS = listOf(PlaybackSettings::gapless, PlaybackSettings::fades, PlaybackSettings::preventClipping,
             PlaybackSettings::ignoreShortFocusLoss, PlaybackSettings::pauseInsteadOfDuck, PlaybackSettings::usbResample,
             PlaybackSettings::preferNativeDsd, PlaybackSettings::dsdRemaster, PlaybackSettings::remasterAllow48k,
-            PlaybackSettings::noDvcOnBluetooth, PlaybackSettings::autoMixEnabled, PlaybackSettings::autoMixTempoMatch)
+            PlaybackSettings::noDvcOnBluetooth, PlaybackSettings::autoMixEnabled, PlaybackSettings::autoMixTempoMatch,
+            PlaybackSettings::interSampleHeadroom, PlaybackSettings::safeVolumeRamp, PlaybackSettings::binauralRoomEnabled)
         val INTS = listOf(PlaybackSettings::crossfadeMs, PlaybackSettings::fadeMs, PlaybackSettings::seekFadeMs,
             PlaybackSettings::silenceMs, PlaybackSettings::usbWarmupMs, PlaybackSettings::remasterMultiple, PlaybackSettings::btCodecRate,
             PlaybackSettings::autoMixBars)
-        val FLOATS = listOf(PlaybackSettings::replayGainPreampDb, PlaybackSettings::untaggedGainDb, PlaybackSettings::remasterGainDb)
+        val FLOATS = listOf(PlaybackSettings::replayGainPreampDb, PlaybackSettings::untaggedGainDb, PlaybackSettings::remasterGainDb,
+            PlaybackSettings::binauralRoomAmbience, PlaybackSettings::binauralSoundstageWidth, PlaybackSettings::binauralItdMicros)
     }
 }

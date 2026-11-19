@@ -11,6 +11,13 @@ class LimiterProcessor(
     var threshold: Float = 0.95f
     var kneeDb: Float = 3.0f
 
+    /**
+     * -3 dB Inter-Sample Peak (ISP) Headroom Option (inspired by studio mastering & Resonada).
+     * Lowers digital ceiling to -3.01 dBFS (0.7071) to prevent DAC oversampling reconstruction
+     * interpolation filters from clipping on hot commercial masters.
+     */
+    var interSampleHeadroom: Boolean = false
+
     private var envelope: Float = 0.0f
     private val attackTime = 0.001f // 1ms
     private val releaseTime = 0.050f // 50ms
@@ -39,6 +46,9 @@ class LimiterProcessor(
     fun process(sample: Float): Float {
         if (!enabled) return sample
 
+        val ceiling = if (interSampleHeadroom) 0.7071f else 1.0f
+        val effectiveThreshold = threshold * ceiling
+
         val absSample = abs(sample)
         envelope = if (absSample > envelope) {
             attackCoeff * envelope + (1.0f - attackCoeff) * absSample
@@ -47,11 +57,11 @@ class LimiterProcessor(
         }
 
         // Envelope gain reduction, then a tanh knee above threshold that is continuous and slope-1 at the threshold
-        val reduced = if (envelope > threshold) sample * threshold / envelope else sample
+        val reduced = if (envelope > effectiveThreshold) sample * effectiveThreshold / envelope else sample
         val mag = abs(reduced)
-        if (mag <= threshold) return reduced
-        val headroom = 1.0f - threshold
-        return sign(reduced) * (threshold + headroom * tanh((mag - threshold) / headroom))
+        if (mag <= effectiveThreshold) return reduced
+        val headroom = ceiling - effectiveThreshold
+        return sign(reduced) * (effectiveThreshold + headroom * tanh((mag - effectiveThreshold) / headroom))
     }
 
     fun reset() {

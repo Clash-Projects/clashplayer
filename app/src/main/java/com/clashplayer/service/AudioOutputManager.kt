@@ -104,6 +104,7 @@ class AudioOutputManager(private val context: Context) {
             UsbAudioOutput.open(usbManager, dac, sampleRate, bitDepth, channels, allowResample, nativeDsd).also {
                 _isBitPerfectActive.value = it.exact
                 _currentDeviceDescription.value = "${dac.productName ?: "USB DAC"} - ${it.description}"
+                startKeepAlive()
             }
         } catch (e: Exception) {
             Log.w(TAG, "USB direct output unavailable: ${e.message}")
@@ -115,7 +116,49 @@ class AudioOutputManager(private val context: Context) {
     fun attachedUsbName(): String? = usbManager.deviceList.values.firstOrNull(UsbAudioOutput::isUsbAudio)?.let { it.productName ?: "USB DAC" }
 
     fun onUsbDirectClosed() {
+        stopKeepAlive()
         _isBitPerfectActive.value = false
+    }
+
+    private var keepAliveTrack: android.media.AudioTrack? = null
+
+    /**
+     * Silent Keep-Alive loop pinned to the internal speaker.
+     * Prevents Android OS / vendor power manager from putting the direct USB DAC stream
+     * to sleep during background playback (reverse-engineered from Resonada NativePlaybackService).
+     */
+    private fun startKeepAlive() {
+        if (keepAliveTrack != null) return
+        try {
+            val speaker = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            }
+            val track = android.media.AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(8000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(8000)
+                .build()
+            if (speaker != null) {
+                track.setPreferredDevice(speaker)
+            }
+            track.write(ByteArray(8000), 0, 8000)
+            track.setLoopPoints(0, 4000, -1)
+            track.setVolume(0.0f)
+            track.play()
+            keepAliveTrack = track
+            Log.i(TAG, "USB DAC power keep-alive active (silent loop pinned to speaker)")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to start power keep-alive: ${t.message}")
+        }
+    }
+
+    private fun stopKeepAlive() {
+        try {
+            keepAliveTrack?.stop()
+            keepAliveTrack?.release()
+        } catch (_: Throwable) {}
+        keepAliveTrack = null
     }
 
     private var permissionPending = false

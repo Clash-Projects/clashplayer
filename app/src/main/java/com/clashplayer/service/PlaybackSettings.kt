@@ -45,4 +45,13 @@ class PlaybackSettings {
     @Volatile var autoMixBars = 8
     /** AutoMix tempo matching (within ±8%). */
     @Volatile var autoMixTempoMatch = true
+    /** -3 dB Inter-Sample Peak (ISP) Headroom option to prevent DAC oversampling distortion. */
+    @Volatile var interSampleHeadroom = true
+    /** Safe volume ramping & DAC attach clamp to protect ears and gear from volume spikes. */
+    @Volatile var safeVolumeRamp = true
+    /** Binaural Room & HRTF Spatializer (Neumann KU 100 3D spatial acoustics). */
+    @Volatile var binauralRoomEnabled = false
+    @Volatile var binauralRoomAmbience = 0.35f
+    @Volatile var binauralSoundstageWidth = 1.15f
+    @Volatile var binauralItdMicros = 280f
 }

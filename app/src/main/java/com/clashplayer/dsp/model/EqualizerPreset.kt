@@ -25,7 +25,9 @@ data class EqualizerPreset(
             EqualizerPreset(4, "Electronic / Dance", TYPE_BUILT_IN, bandGains = listOf(5.0f, 4.0f, 2.0f, 0.0f, -1.5f, 2.0f, 3.5f, 4.0f, 4.5f, 5.0f), bass = 3.0f, treble = 2.0f),
             EqualizerPreset(5, "Rock", TYPE_BUILT_IN, bandGains = listOf(4.5f, 3.5f, 2.0f, -1.0f, -0.5f, 1.0f, 2.5f, 3.5f, 4.0f, 4.5f)),
             EqualizerPreset(6, "Acoustic", TYPE_BUILT_IN, bandGains = listOf(3.5f, 3.0f, 2.0f, 1.0f, 1.5f, 2.0f, 3.0f, 3.5f, 3.0f, 2.5f)),
-            EqualizerPreset(7, "Treble Boost", TYPE_BUILT_IN, bandGains = listOf(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 1.5f, 3.0f, 5.0f, 6.0f, 6.5f), treble = 4.0f)
+            EqualizerPreset(7, "Treble Boost", TYPE_BUILT_IN, bandGains = listOf(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 1.5f, 3.0f, 5.0f, 6.0f, 6.5f), treble = 4.0f),
+            EqualizerPreset(8, "Harman In-Ear 2019", TYPE_BUILT_IN, bandGains = listOf(7.7f, 5.6f, 1.4f, -1.6f, -1.4f, 0.0f, 5.8f, 8.9f, 3.6f, -10.2f), bass = 3.5f),
+            EqualizerPreset(9, "Harman Over-Ear 2018", TYPE_BUILT_IN, bandGains = listOf(3.9f, 2.8f, -0.1f, -2.0f, -0.8f, 0.0f, 5.3f, 8.2f, 2.4f, -9.2f), bass = 2.0f)
         )
     }
 }

@@ -332,6 +332,88 @@ private fun ToneAndSpaceTab(
         }
 
         item {
+            var binauralOn by remember { mutableStateOf(audioEngine.binauralSpatializer.enabled) }
+            var roomAmbience by remember { mutableStateOf(audioEngine.binauralSpatializer.roomAmbience) }
+            var soundstageWidth by remember { mutableStateOf(audioEngine.binauralSpatializer.soundstageWidth) }
+            var directMix by remember { mutableStateOf(audioEngine.binauralSpatializer.directMix) }
+
+            Text(
+                text = "Binaural Room Spatializer (Neumann KU 100)",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = Ink
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ObsidianPanel(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("3D Headphone Spatializer & Studio Room", style = MaterialTheme.typography.titleSmall, color = Ink)
+                            Text(
+                                "Georg Neumann KU 100 HRTF dummy head pinna notch, ITD/ILD acoustic shadow & BRIR room reflections",
+                                style = HudStyle
+                            )
+                        }
+                        NotchToggle(binauralOn, {
+                            binauralOn = it
+                            audioEngine.setBinauralEnabled(it)
+                        })
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        RotaryKnob(
+                            value = roomAmbience * 100f,
+                            min = 0f, max = 100f,
+                            label = "Room Ambience",
+                            unit = "%",
+                            onValueChange = {
+                                val a = it / 100f
+                                roomAmbience = a
+                                audioEngine.setBinauralRoomAmbience(a)
+                            }
+                        )
+
+                        RotaryKnob(
+                            value = soundstageWidth,
+                            min = 0.5f, max = 2.0f,
+                            label = "Soundstage",
+                            unit = "x",
+                            onValueChange = {
+                                soundstageWidth = it
+                                audioEngine.setBinauralSoundstageWidth(it)
+                            }
+                        )
+
+                        RotaryKnob(
+                            value = directMix * 100f,
+                            min = 20f, max = 100f,
+                            label = "Direct Mix",
+                            unit = "%",
+                            onValueChange = {
+                                val d = it / 100f
+                                directMix = d
+                                audioEngine.setBinauralDirectMix(d)
+                            }
+                        )
+                    }
+
+                    Text(
+                        "KU 100 DUMMY HEAD · 280µs ITD · 6kHz PINNA NOTCH · 3.2kHz RESONANCE · BRIR CONTROL ROOM",
+                        style = HudStyle.copy(color = Phosphor),
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                }
+            }
+        }
+
+        item {
             Text(
                 text = "Tone Controls",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),

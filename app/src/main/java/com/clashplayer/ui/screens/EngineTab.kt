@@ -1,6 +1,9 @@
 package com.clashplayer.ui.screens
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +28,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.clashplayer.dsp.AudioEngine
 import com.clashplayer.dsp.DitherType
@@ -31,6 +39,7 @@ import com.clashplayer.dsp.ReplayGainMode
 import com.clashplayer.service.OutputDevice
 import com.clashplayer.service.OutputProfile
 import com.clashplayer.service.PlaybackSettings
+import com.clashplayer.ui.theme.Ember
 import com.clashplayer.ui.theme.HudStyle
 import com.clashplayer.ui.theme.Phosphor
 import kotlinx.coroutines.flow.StateFlow
@@ -117,6 +126,13 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Ticks("Dither", "Used when samples are changed on the way to an integer output (resampling, software volume). F- and E-weighted apply at 44.1 and 48 kHz; Shibata types are designed for any rate.",
                         DitherType.entries, audioEngine.ditherer.type, { it.label }) { audioEngine.ditherer.type = it }
+                    Toggle("-3 dB Inter-Sample Headroom", "Leaves +3 dB true-peak headroom margin to prevent DAC reconstruction filters from clipping on hot commercial masters.", settings.interSampleHeadroom) {
+                        settings.interSampleHeadroom = it
+                        audioEngine.setInterSampleHeadroomEnabled(it)
+                    }
+                    Toggle("Safe Volume Ramp & DAC Guard", "Smooth volume ramping and clamp on DAC connect to protect ears and gear from unexpected volume blasts.", settings.safeVolumeRamp) {
+                        settings.safeVolumeRamp = it
+                    }
                     Toggle("Resample for USB DAC", "If the DAC lacks a track's rate, convert to its cleanest rate and stay on USB. Takes effect at the next track.", settings.usbResample) { settings.usbResample = it }
                     Ticks("USB warm-up", "Silence after opening the DAC, for ones that mute or distort their first moments.", listOf(0, 100, 250, 500), settings.usbWarmupMs,
                         { if (it == 0) "Off" else "$it ms" }) { settings.usbWarmupMs = it }
@@ -159,7 +175,95 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
         }
         if (output != null) item { DeviceProfile(output) }
         item {
-            SectionRule(8, "Interruptions")
+            val metrics by audioEngine.fidelityAnalyzer.metricsFlow.collectAsState()
+            SectionRule(8, "Mastering & Fidelity")
+            Spacer(Modifier.height(10.dp))
+            ObsidianPanel(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("DYNAMIC RANGE", style = HudStyle.copy(color = InkDim))
+                            Text(
+                                "DR${metrics.dynamicRange}",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    color = if (metrics.dynamicRange >= 10) Phosphor else if (metrics.dynamicRange >= 7) Ember else Color(0xFFFF5252)
+                                )
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("INTEGRATED LOUDNESS", style = HudStyle.copy(color = InkDim))
+                            Text(
+                                String.format(java.util.Locale.US, "%.1f LUFS", metrics.lufs),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Ink
+                            )
+                        }
+                    }
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("4x TRUE-PEAK (dBTP)", style = HudStyle.copy(color = InkDim))
+                            val tpText = String.format(java.util.Locale.US, "%.2f dBTP", metrics.truePeakDb)
+                            Text(
+                                tpText,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (metrics.truePeakDb > 0.0f) Color(0xFFFF5252) else Ink
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("INTER-SAMPLE CLIPS", style = HudStyle.copy(color = InkDim))
+                            Text(
+                                "${metrics.trueClippingCount} overs",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (metrics.trueClippingCount > 0) Color(0xFFFF5252) else Phosphor
+                            )
+                        }
+                    }
+
+                    Column {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("STEREO PHASE CORRELATION", style = HudStyle.copy(color = InkDim))
+                            Text(
+                                String.format(java.util.Locale.US, "%+.2f", metrics.stereoCorrelation),
+                                style = HudStyle.copy(color = if (metrics.stereoCorrelation >= 0f) Phosphor else Color(0xFFFF5252))
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        CorrelationBar(metrics.stereoCorrelation)
+                    }
+
+                    Column {
+                        Text("SPECTRAL PURITY & AUTHENTIC HI-RES", style = HudStyle.copy(color = InkDim))
+                        Spacer(Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (metrics.isAuthenticHiRes) Phosphor.copy(alpha = 0.15f) else Color(0xFFFF5252).copy(alpha = 0.15f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    if (metrics.isAuthenticHiRes) "AUTHENTIC ${metrics.spectralCutoffHz} Hz" else "SPECTRALLY CONSTRAINED",
+                                    style = HudStyle.copy(
+                                        color = if (metrics.isAuthenticHiRes) Phosphor else Color(0xFFFF5252)
+                                    )
+                                )
+                            }
+                            if (metrics.fakeHiResWarning != null) {
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    metrics.fakeHiResWarning!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFFF5252)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SectionRule(9, "Interruptions")
             Spacer(Modifier.height(10.dp))
             ObsidianPanel(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -223,5 +327,42 @@ private fun <T> Ticks(title: String?, desc: String?, options: List<T>, initial: 
         title?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = Ink) }
         desc?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = InkDim) }
         TickSelector(options.map(label), sel, { sel = it; onChange(options[it]) }, Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun CorrelationBar(correlation: Float) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF161A22))
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val center = size.width / 2f
+            drawLine(
+                color = Color.Gray.copy(alpha = 0.5f),
+                start = Offset(center, 0f),
+                end = Offset(center, size.height),
+                strokeWidth = 1.dp.toPx()
+            )
+            val norm = ((correlation + 1f) / 2f).coerceIn(0f, 1f)
+            val markerX = norm * size.width
+            val barColor = if (correlation >= 0f) Phosphor else Color(0xFFFF5252)
+            if (markerX >= center) {
+                drawRect(
+                    color = barColor,
+                    topLeft = Offset(center, 0f),
+                    size = Size((markerX - center).coerceAtLeast(1f), size.height)
+                )
+            } else {
+                drawRect(
+                    color = barColor,
+                    topLeft = Offset(markerX, 0f),
+                    size = Size((center - markerX).coerceAtLeast(1f), size.height)
+                )
+            }
+        }
     }
 }
