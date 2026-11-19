@@ -122,8 +122,8 @@ fun VisualizerScreen(
                 .align(Alignment.BottomCenter)
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
-                val modes = listOf(VisualizerMode.SPECTRUM_BARS, VisualizerMode.OSCILLOSCOPE, VisualizerMode.CIRCULAR_AURORA)
-                TickSelector(listOf("Bars", "Waveform", "Aurora"), modes.indexOf(visualMode), { visualMode = modes[it] })
+                val modes = listOf(VisualizerMode.SPECTRUM_BARS, VisualizerMode.OSCILLOSCOPE, VisualizerMode.CIRCULAR_AURORA, VisualizerMode.STFT_SPECTROGRAM)
+                TickSelector(listOf("Bars", "Waveform", "Aurora", "STFT Spectrogram"), modes.indexOf(visualMode), { visualMode = modes[it] })
                 TickSelector(listOf("Phosphor", "Ember", "Signal"), colorTheme, { colorTheme = it })
             }
         }

@@ -73,6 +73,7 @@ fun MainAppContainer(
 ) {
     var selectedTab by remember { mutableStateOf(NavTab.HOME) }
     var isNowPlayingExpanded by remember { mutableStateOf(false) }
+    var isSignalPathExpanded by remember { mutableStateOf(false) }
     var shuffle by remember { mutableStateOf(service.isShuffle) }
     var repeatMode by remember { mutableIntStateOf(service.repeatMode) }
 
@@ -117,7 +118,8 @@ fun MainAppContainer(
                 onReplayGainChanged = service::refreshReplayGain,
                 outputControls = remember(service) {
                     OutputControls(service.currentOutput, service.bluetoothCodecResult, service::profileFor, service::setProfile, service::applyOutputProfile)
-                }
+                },
+                onOpenSignalPath = { isSignalPathExpanded = true }
             )
             NavTab.VISUALIZER -> VisualizerScreen(
                 audioEngine = audioEngine,
@@ -166,7 +168,17 @@ fun MainAppContainer(
             onOpenEqualizer = {
                 isNowPlayingExpanded = false
                 selectedTab = NavTab.EQUALIZER
-            }
+            },
+            onOpenSignalPath = { isSignalPathExpanded = true }
+        )
+
+        SignalPathInspectorSheet(
+            expanded = isSignalPathExpanded,
+            track = currentTrack,
+            clock = service.outputClock(),
+            audioEngine = audioEngine,
+            settings = service.settings,
+            onDismiss = { isSignalPathExpanded = false }
         )
     }
 }

@@ -102,6 +102,7 @@ fun NowPlayingSheet(
     onCycleRepeat: () -> Unit,
     onDismiss: () -> Unit,
     onOpenEqualizer: () -> Unit,
+    onOpenSignalPath: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (track == null) return
@@ -220,7 +221,7 @@ fun NowPlayingSheet(
                 // Title block: heavy title over a light artist line, format HUD under it
                 Text(track.title, style = MaterialTheme.typography.headlineLarge, color = Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(track.artist, style = MaterialTheme.typography.bodyLarge, color = InkDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                FormatHud(outputClock, Modifier.padding(top = 4.dp))
+                FormatHud(outputClock, Modifier.padding(top = 4.dp), onOpenSignalPath = onOpenSignalPath)
 
                 Spacer(Modifier.height(8.dp))
                 val fraction = if (durationMs > 0) currentPositionMs.toFloat() / durationMs else 0f

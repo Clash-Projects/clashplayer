@@ -9,12 +9,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import com.clashplayer.ui.theme.Phosphor
@@ -25,7 +29,8 @@ import kotlin.math.sin
 enum class VisualizerMode {
     SPECTRUM_BARS,
     OSCILLOSCOPE,
-    CIRCULAR_AURORA
+    CIRCULAR_AURORA,
+    STFT_SPECTROGRAM
 }
 
 @Composable
@@ -39,6 +44,18 @@ fun AudioSpectrumView(
     secondaryColor: Color = Ember
 ) {
     val peakDecay = remember { FloatArray(barCount) { 0f } }
+
+    val spectrogramHistory = remember { Array(60) { FloatArray(barCount) } }
+    var spectrogramHead by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(magnitudes) {
+        if (mode == VisualizerMode.STFT_SPECTROGRAM && magnitudes.isNotEmpty()) {
+            val target = spectrogramHistory[spectrogramHead % spectrogramHistory.size]
+            val count = minOf(target.size, magnitudes.size)
+            System.arraycopy(magnitudes, 0, target, 0, count)
+            spectrogramHead++
+        }
+    }
 
     val gradient = remember(accentColor, secondaryColor) {
         Brush.verticalGradient(
@@ -138,6 +155,68 @@ fun AudioSpectrumView(
                         cap = StrokeCap.Round
                     )
                 }
+            }
+
+            VisualizerMode.STFT_SPECTROGRAM -> {
+                val numCols = spectrogramHistory.size
+                val colWidth = width / numCols.toFloat()
+                val numRows = barCount
+                val rowHeight = height / numRows.toFloat()
+
+                for (c in 0 until numCols) {
+                    val sliceIndex = (spectrogramHead - numCols + c + numCols * 10) % numCols
+                    val slice = spectrogramHistory[sliceIndex]
+                    val x = c * colWidth
+
+                    for (r in 0 until numRows) {
+                        val mag = slice[r].coerceIn(0f, 1f)
+                        val y = height - (r + 1) * rowHeight
+
+                        val cellColor = when {
+                            mag < 0.08f -> Color(0xFF06080C)
+                            mag < 0.25f -> Color(0xFF0A2239)
+                            mag < 0.50f -> accentColor.copy(alpha = 0.5f + mag)
+                            mag < 0.75f -> secondaryColor.copy(alpha = 0.7f + 0.3f * mag)
+                            else -> Color(0xFFFFFFFF)
+                        }
+
+                        drawRect(
+                            color = cellColor,
+                            topLeft = Offset(x, y),
+                            size = Size(colWidth + 0.6f, rowHeight + 0.6f)
+                        )
+                    }
+                }
+
+                // Cutoff Guideline: 16 kHz (MP3 Cutoff)
+                val y16k = height * (1f - 16000f / 48000f)
+                drawLine(
+                    color = Color(0xFFFF5252).copy(alpha = 0.75f),
+                    start = Offset(0f, y16k),
+                    end = Offset(width, y16k),
+                    strokeWidth = 1.2f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f))
+                )
+
+                // Cutoff Guideline: 20 kHz (320kbps Cutoff)
+                val y20k = height * (1f - 20000f / 48000f)
+                drawLine(
+                    color = Ember.copy(alpha = 0.75f),
+                    start = Offset(0f, y20k),
+                    end = Offset(width, y20k),
+                    strokeWidth = 1.2f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f))
+                )
+
+                // Cutoff Guideline: 22.05 kHz (CD Redbook Nyquist)
+                val y22k = height * (1f - 22050f / 48000f)
+                drawLine(
+                    color = Phosphor.copy(alpha = 0.85f),
+                    start = Offset(0f, y22k),
+                    end = Offset(width, y22k),
+                    strokeWidth = 1.5f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 8f))
+                )
             }
         }
     }

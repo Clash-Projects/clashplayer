@@ -54,4 +54,8 @@ class PlaybackSettings {
     @Volatile var binauralRoomAmbience = 0.35f
     @Volatile var binauralSoundstageWidth = 1.15f
     @Volatile var binauralItdMicros = 280f
+    /** Bit Xact: native USB DAC engine, bit-exact output, zero resampling, bypasses software mixers. */
+    @Volatile var bitXactMode = true
+    /** Force LDAC 990 kbps high-resolution Bluetooth priority. */
+    @Volatile var ldacQualityLock = true
 }

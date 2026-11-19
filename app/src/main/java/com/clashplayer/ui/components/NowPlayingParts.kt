@@ -172,12 +172,19 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPlatter(colors:
     drawCircle(Color(0xFF07080B), r * 0.035f, c)
 }
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+
 /**
  * The format badge: a status LED (phosphor when bit-perfect, ember when the signal is processed) and the stream's
- * format. Tapping it opens the live DAC clock monitor.
+ * format. Tapping it opens the live DAC clock monitor and Live Signal Path Inspector.
  */
 @Composable
-fun FormatHud(clock: () -> OutputClock, modifier: Modifier = Modifier) {
+fun FormatHud(
+    clock: () -> OutputClock,
+    modifier: Modifier = Modifier,
+    onOpenSignalPath: (() -> Unit)? = null
+) {
     var open by remember { mutableStateOf(false) }
     val snapshot by produceState(clock()) { while (true) { value = clock(); delay(if (open) 250 else 1000) } }
     Column(modifier) {
@@ -198,13 +205,17 @@ fun FormatHud(clock: () -> OutputClock, modifier: Modifier = Modifier) {
             Text(if (open) "  ▴" else "  ▾", style = HudStyle.copy(color = InkMuted))
         }
         AnimatedVisibility(open, enter = expandVertically(spring(0.8f, 380f)) + fadeIn(), exit = shrinkVertically(spring(0.9f, 500f)) + fadeOut()) {
-            ClockMonitor(snapshot, Modifier.padding(top = 8.dp))
+            ClockMonitor(snapshot, Modifier.padding(top = 8.dp), onOpenSignalPath = onOpenSignalPath)
         }
     }
 }
 
 @Composable
-private fun ClockMonitor(clock: OutputClock, modifier: Modifier = Modifier) {
+private fun ClockMonitor(
+    clock: OutputClock,
+    modifier: Modifier = Modifier,
+    onOpenSignalPath: (() -> Unit)? = null
+) {
     // Drift history, newest last; 64 samples at 4 Hz is the last 16 s
     val history = remember { FloatArray(64) { Float.NaN } }
     val head = remember { mutableIntStateOf(0) }
@@ -238,6 +249,22 @@ private fun ClockMonitor(clock: OutputClock, modifier: Modifier = Modifier) {
                     Text(k, style = HudStyle, modifier = Modifier.width(92.dp))
                     Text(v, style = HudStyle.copy(color = Ink, fontWeight = FontWeight(400)))
                 }
+            }
+            if (onOpenSignalPath != null) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Phosphor.copy(alpha = 0.15f))
+                        .clickable(onClick = onOpenSignalPath)
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("INSPECT LIVE SIGNAL PATH", style = HudStyle.copy(color = Phosphor))
+                }
+            }
             }
             Spacer(Modifier.height(12.dp))
             // Drift trace: drag across it to read any moment of the last 16 s

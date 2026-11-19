@@ -2,6 +2,7 @@ package com.clashplayer.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,7 +54,13 @@ import com.clashplayer.ui.theme.InkDim
 
 /** Transitions, tempo, loudness, output precision and interruption handling. */
 @Composable
-internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onReplayGainChanged: () -> Unit, output: OutputControls? = null) {
+internal fun EngineTab(
+    audioEngine: AudioEngine,
+    settings: PlaybackSettings,
+    onReplayGainChanged: () -> Unit,
+    output: OutputControls? = null,
+    onOpenSignalPath: () -> Unit = {}
+) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             SectionRule(1, "Transitions")
@@ -126,6 +133,9 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Ticks("Dither", "Used when samples are changed on the way to an integer output (resampling, software volume). F- and E-weighted apply at 44.1 and 48 kHz; Shibata types are designed for any rate.",
                         DitherType.entries, audioEngine.ditherer.type, { it.label }) { audioEngine.ditherer.type = it }
+                    Toggle("Bit Xact USB Direct", "Pure 1:1 bit-exact streaming to USB DAC. Bypasses software mixers and filters for uncompromising bit-exact transmission.", settings.bitXactMode) {
+                        settings.bitXactMode = it
+                    }
                     Toggle("-3 dB Inter-Sample Headroom", "Leaves +3 dB true-peak headroom margin to prevent DAC reconstruction filters from clipping on hot commercial masters.", settings.interSampleHeadroom) {
                         settings.interSampleHeadroom = it
                         audioEngine.setInterSampleHeadroomEnabled(it)
@@ -146,7 +156,7 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Toggle("Native DSD", "Send DSD files raw when the DAC has a native DSD mode; otherwise DoP.", settings.preferNativeDsd) { settings.preferNativeDsd = it }
                     Toggle("DSD remaster", "Convert PCM tracks to DSD after the DSP chain and send it as DoP. USB direct only; heavy on the CPU at 128 and 256.", settings.dsdRemaster) { settings.dsdRemaster = it }
-                    Ticks("Remaster rate", null, listOf(64, 128, 256), settings.remasterMultiple, { "DSD$it" }) { settings.remasterMultiple = it }
+                    Ticks("Remaster rate", "Supports DSD64, DSD128, DSD256, DSD512 and DSD1024 native rates.", listOf(64, 128, 256, 512, 1024), settings.remasterMultiple, { "DSD$it" }) { settings.remasterMultiple = it }
                     Toggle("48 kHz-based DSD", "Use 48 kHz-family DSD rates for 48 kHz-family tracks.", settings.remasterAllow48k) { settings.remasterAllow48k = it }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                         var g by remember { mutableStateOf(settings.remasterGainDb) }
@@ -162,6 +172,9 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Toggle("No DVC on Bluetooth", "Headsets usually set their own volume; software volume on top would make it too quiet.", settings.noDvcOnBluetooth) {
                         settings.noDvcOnBluetooth = it; output?.reapply?.invoke()
+                    }
+                    Toggle("LDAC 990 kbps Quality Priority", "Locks LDAC codec to maximum 990/909 kbps bitrate mode (24-bit/96kHz) for uncompromising Hi-Res Bluetooth fidelity.", settings.ldacQualityLock) {
+                        settings.ldacQualityLock = it
                     }
                     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { output?.reapply?.invoke() }
                     Ticks("Codec sample rate", "Asks the headset codec for this rate. Many phones only allow system apps to change it; the result shows below.",
@@ -258,6 +271,20 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
                                 )
                             }
                         }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Phosphor.copy(alpha = 0.12f))
+                            .clickable(onClick = onOpenSignalPath)
+                            .padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("VIEW LIVE SIGNAL PATH INSPECTOR", style = HudStyle.copy(color = Phosphor))
                     }
                 }
             }

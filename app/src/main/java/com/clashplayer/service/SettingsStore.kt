@@ -145,7 +145,8 @@ class SettingsStore(context: Context) {
             PlaybackSettings::ignoreShortFocusLoss, PlaybackSettings::pauseInsteadOfDuck, PlaybackSettings::usbResample,
             PlaybackSettings::preferNativeDsd, PlaybackSettings::dsdRemaster, PlaybackSettings::remasterAllow48k,
             PlaybackSettings::noDvcOnBluetooth, PlaybackSettings::autoMixEnabled, PlaybackSettings::autoMixTempoMatch,
-            PlaybackSettings::interSampleHeadroom, PlaybackSettings::safeVolumeRamp, PlaybackSettings::binauralRoomEnabled)
+            PlaybackSettings::interSampleHeadroom, PlaybackSettings::safeVolumeRamp, PlaybackSettings::binauralRoomEnabled,
+            PlaybackSettings::bitXactMode, PlaybackSettings::ldacQualityLock)
         val INTS = listOf(PlaybackSettings::crossfadeMs, PlaybackSettings::fadeMs, PlaybackSettings::seekFadeMs,
             PlaybackSettings::silenceMs, PlaybackSettings::usbWarmupMs, PlaybackSettings::remasterMultiple, PlaybackSettings::btCodecRate,
             PlaybackSettings::autoMixBars)

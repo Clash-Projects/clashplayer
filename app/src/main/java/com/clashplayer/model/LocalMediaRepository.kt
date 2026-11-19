@@ -9,13 +9,18 @@ import android.provider.MediaStore
 import java.util.Locale
 
 object LocalMediaRepository {
-    /** Extensions played by the app, including DSD, which Android's media scanner usually skips. */
-    val AUDIO_EXTENSIONS = setOf("flac", "wav", "mp3", "m4a", "aac", "alac", "ogg", "oga", "opus", "aiff", "aif", "wma", "ape", "wv", "dsf", "dff", "mka")
+    /** Extensions played by the app, including DSD, SACD ISO, and DTS-HD Master Audio. */
+    val AUDIO_EXTENSIONS = setOf(
+        "flac", "wav", "mp3", "m4a", "aac", "alac", "ogg", "oga", "opus",
+        "aiff", "aif", "wma", "ape", "wv", "dsf", "dff", "iso", "sacd", "dts", "dtshd", "mka"
+    )
 
     fun formatOf(fileName: String?, mime: String?): String {
         val ext = fileName?.substringAfterLast('.', "")?.lowercase(Locale.US).orEmpty()
         return when {
             ext == "dsf" || ext == "dff" -> "DSD"
+            ext == "iso" || ext == "sacd" -> "SACD ISO"
+            ext == "dts" || ext == "dtshd" -> "DTS-HD MA"
             ext.isNotEmpty() && ext in AUDIO_EXTENSIONS -> ext.uppercase(Locale.US).replace("M4A", "AAC/ALAC")
             mime != null -> mime.substringAfter('/').uppercase(Locale.US)
             else -> "AUDIO"
