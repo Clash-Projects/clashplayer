@@ -20,11 +20,13 @@ class LimiterProcessor(
     var interSampleHeadroom: Boolean = false
 
     private var envelope: Float = 0.0f
-    private val attackTime = 0.0003f // 0.3ms fast brickwall attack
-    private val releaseTime = 0.050f // 50ms
+    // Instant attack + peak hold + slow release: the gain can't follow the waveform, which is what crackled on bass
+    private val holdTime = 0.030f // longer than half a 20 Hz cycle
+    private val releaseTime = 0.200f
 
-    private var attackCoeff = 0.0f
     private var releaseCoeff = 0.0f
+    private var holdSamples = 0
+    private var holdLeft = 0
 
     // Sample history for 4x oversampled parabolic / sinc inter-sample peak detection
     private var prevL1 = 0.0f
@@ -46,7 +48,7 @@ class LimiterProcessor(
     private fun updateCoefficients() {
         // Envelope is shared by L and R (linked stereo) and advanced twice per frame
         val rate = 2.0 * sampleRate
-        attackCoeff = Math.exp(-1.0 / (attackTime * rate)).toFloat()
+        holdSamples = (holdTime * rate).toInt()
         releaseCoeff = Math.exp(-1.0 / (releaseTime * rate)).toFloat()
     }
 
@@ -95,13 +97,16 @@ class LimiterProcessor(
             abs(sample)
         }
 
-        envelope = if (detectedPeak > envelope) {
-            attackCoeff * envelope + (1.0f - attackCoeff) * detectedPeak
+        if (detectedPeak >= envelope) {
+            envelope = detectedPeak
+            holdLeft = holdSamples
+        } else if (holdLeft > 0) {
+            holdLeft--
         } else {
-            releaseCoeff * envelope + (1.0f - releaseCoeff) * detectedPeak
+            envelope = max(detectedPeak, releaseCoeff * envelope)
         }
 
-        // Envelope gain reduction, then a tanh knee above threshold that is continuous and slope-1 at the threshold
+        // Envelope >= this peak, so the reduced sample stays under threshold; the tanh knee is a backstop
         val reduced = if (envelope > effectiveThreshold) sample * effectiveThreshold / envelope else sample
         val mag = abs(reduced)
         if (mag <= effectiveThreshold) return reduced
@@ -112,6 +117,7 @@ class LimiterProcessor(
 
     fun reset() {
         envelope = 0.0f
+        holdLeft = 0
         prevL1 = 0.0f
         prevL2 = 0.0f
         prevR1 = 0.0f

@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeDown
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material3.Icon
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
@@ -103,6 +106,8 @@ fun NowPlayingSheet(
     onDismiss: () -> Unit,
     onOpenEqualizer: () -> Unit,
     onOpenSignalPath: () -> Unit = {},
+    volume: () -> Float = { 1f },
+    onVolumeChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (track == null) return
@@ -247,6 +252,17 @@ fun NowPlayingSheet(
                         if (repeatMode == PlaybackService.REPEAT_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                         "Repeat", onCycleRepeat, active = repeatMode != PlaybackService.REPEAT_OFF
                     )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Rounded.VolumeDown, "Volume", tint = InkDim)
+                    TactileSeekBar(
+                        progress = volume,
+                        onSeek = onVolumeChange,
+                        onScrub = { it?.let(onVolumeChange) },
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = InkDim)
                 }
 
                 Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {

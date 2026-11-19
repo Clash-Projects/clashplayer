@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -58,20 +57,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private val library by lazy { MediaLibrary(applicationContext) }
-    private val audioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
-                playbackService?.syncSystemVolume()
-                return true
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
-                playbackService?.syncSystemVolume()
-                return true
-            }
+        val service = playbackService
+        if (service != null && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            service.stepVolume(keyCode == KeyEvent.KEYCODE_VOLUME_UP)
+            return true
         }
         return super.onKeyDown(keyCode, event)
     }
