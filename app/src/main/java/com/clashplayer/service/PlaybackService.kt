@@ -1,15 +1,21 @@
 package com.clashplayer.service
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.database.ContentObserver
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.clashplayer.dsd.DsdRemaster
 import com.clashplayer.dsp.AudioEngine
@@ -82,6 +88,61 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         store.load(audioEngine, settings)?.let(outputManager::selectDriver)
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
         createNotificationChannel()
+
+        try {
+            androidx.core.content.ContextCompat.registerReceiver(
+                this,
+                volumeReceiver,
+                IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+                androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+            )
+        } catch (_: Throwable) {
+            try { registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION")) } catch (_: Throwable) {}
+        }
+
+        try {
+            contentResolver.registerContentObserver(
+                Settings.System.CONTENT_URI,
+                true,
+                volumeObserver
+            )
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "Failed to register volume content observer: ${t.message}")
+        }
+        syncSystemVolume()
+    }
+
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            syncSystemVolume()
+        }
+    }
+
+    private val volumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            super.onChange(selfChange)
+            syncSystemVolume()
+        }
+    }
+
+    fun syncSystemVolume() {
+        try {
+            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            if (max > 0) {
+                audioEngine.volumeSteps = max
+                val fraction = (current.toFloat() / max.toFloat()).coerceIn(0f, 1f)
+                audioEngine.volume = fraction
+                val db = audioEngine.volumeDb()
+                usbOutput?.let { usb ->
+                    if (usb.hasHardwareVolume) {
+                        usb.setVolumeDb(db)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "Failed to sync system volume: ${t.message}")
+        }
     }
 
     private lateinit var store: SettingsStore
@@ -196,6 +257,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         resampler = if (!audioEngine.bitPerfect && usb.sampleRate != dec.sampleRate) Resampler(dec.sampleRate, usb.sampleRate, dec.outChannels) else null
         if (!bitstream) pendingWarmupMs = settings.usbWarmupMs // DSD silence would need its own idle pattern
         applyOutputProfile()
+        syncSystemVolume()
     }
 
     /** DSP path (stereo, processed) setup shared by every non-bit-perfect output. */
@@ -948,6 +1010,8 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        try { unregisterReceiver(volumeReceiver) } catch (_: Throwable) {}
+        try { contentResolver.unregisterContentObserver(volumeObserver) } catch (_: Throwable) {}
         runBlocking { playbackJob?.cancelAndJoin() } // the loop may be inside a USB write
         saveSettings()
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
