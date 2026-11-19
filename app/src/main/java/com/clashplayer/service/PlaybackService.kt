@@ -188,7 +188,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         // Pass every channel through when the DAC has room for them; otherwise a stereo downmix
         if (!bitstream) dec.outChannels = if (usb.channels >= dec.channels) dec.channels else 2
         audioEngine.bitPerfect = usb.exact
-        audioEngine.bypassSoftwareVolume = if (settings.bitXactMode && usb.exact) false else !usb.hasHardwareVolume
+        audioEngine.bypassSoftwareVolume = !usb.hasHardwareVolume
         audioEngine.visualizerFeed = !bitstream
         audioEngine.bypassChannels = dec.outChannels
         audioEngine.updateSampleRate(dec.sampleRate)
@@ -261,7 +261,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
 
         // 1. Own USB Audio driver: exclusive, any Android version, DAC clocked at the track's rate
-        outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, if (settings.bitXactMode) false else settings.usbResample)?.let { return useUsb(it, dec) }
+        val usb = outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, allowResample = false)
+            ?: if (settings.usbResample) outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, allowResample = true) else null
+        if (usb != null) return useUsb(usb, dec)
+
         useDspPath(dec)
         val sampleRate = dec.sampleRate
         val bitDepth = dec.bitDepth
@@ -291,20 +294,51 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             resampler = null
         }
 
-        val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, outputEncoding)
+        var trackRate = sampleRate
+        var minBuf = AudioTrack.getMinBufferSize(trackRate, AudioFormat.CHANNEL_OUT_STEREO, outputEncoding)
+        if (minBuf <= 0 && bitPerfect == null) {
+            trackRate = 48000
+            minBuf = AudioTrack.getMinBufferSize(trackRate, AudioFormat.CHANNEL_OUT_STEREO, outputEncoding)
+            if (minBuf > 0) {
+                resampler = Resampler(sampleRate, trackRate, 2)
+            }
+        }
 
-        audioTrack = AudioTrack.Builder()
-            .setAudioAttributes(mediaAttributes)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(outputEncoding)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+        try {
+            audioTrack = AudioTrack.Builder()
+                .setAudioAttributes(mediaAttributes)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(outputEncoding)
+                        .setSampleRate(trackRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuf.coerceAtLeast(4096) * 4)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+        } catch (e: Exception) {
+            if (trackRate != 48000) {
+                trackRate = 48000
+                resampler = Resampler(sampleRate, trackRate, 2)
+                outputEncoding = AudioFormat.ENCODING_PCM_FLOAT
+                val fallbackBuf = AudioTrack.getMinBufferSize(trackRate, AudioFormat.CHANNEL_OUT_STEREO, outputEncoding).coerceAtLeast(4096)
+                audioTrack = AudioTrack.Builder()
+                    .setAudioAttributes(mediaAttributes)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(outputEncoding)
+                            .setSampleRate(trackRate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(fallbackBuf * 4)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
                     .build()
-            )
-            .setBufferSizeInBytes(minBuf * 4)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
+            } else {
+                throw e
+            }
+        }
         if (Build.VERSION.SDK_INT >= 23) {
             outputManager.bitPerfectDevice?.let { audioTrack?.setPreferredDevice(it) }
         }
