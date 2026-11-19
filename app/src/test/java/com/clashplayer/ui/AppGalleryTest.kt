@@ -152,6 +152,9 @@ class AppGalleryTest {
     @Test fun g12_studioOutput() = shoot("12_studio_output", { Stage { EqualizerStudio(engine(), AudioDriverType.BIT_PERFECT_DIRECT, {}, {}) } },
         { rule.onNodeWithText("OUTPUT").performClick() })
 
+    @Test fun g15_studioEngine() = shoot("15_studio_engine", { Stage { EqualizerStudio(engine(), AudioDriverType.BIT_PERFECT_DIRECT, {}, {}) } },
+        { rule.onNodeWithText("ENGINE").performClick() })
+
     @Test fun g13_visualizer() = shoot("13_visualizer", { Stage(0.7f) { VisualizerScreen(engine(), {}) } })
 
     @Test fun g14_miniPlayer() = shoot("14_home_scrolled_chrome", { Stage(0.6f) { Chrome(NavTab.HOME) } })

@@ -93,7 +93,7 @@ class AudioOutputManager(private val context: Context) {
      * track's exact rate. Returns null if bit-perfect isn't selected, no DAC is attached, permission is still pending
      * ([onPermission] runs once the user grants it), or the DAC can't play this rate.
      */
-    fun openUsbDirect(sampleRate: Int, bitDepth: Int, channels: Int, onPermission: () -> Unit): UsbAudioOutput? {
+    fun openUsbDirect(sampleRate: Int, bitDepth: Int, channels: Int, onPermission: () -> Unit, allowResample: Boolean = false): UsbAudioOutput? {
         if (_selectedDriver.value != AudioDriverType.BIT_PERFECT_DIRECT || usbDirectSuspended) return null
         val dac: UsbDevice = usbManager.deviceList.values.firstOrNull(UsbAudioOutput::isUsbAudio) ?: return null
         if (!usbManager.hasPermission(dac)) {
@@ -101,7 +101,7 @@ class AudioOutputManager(private val context: Context) {
             return null
         }
         return try {
-            UsbAudioOutput.open(usbManager, dac, sampleRate, bitDepth, channels).also {
+            UsbAudioOutput.open(usbManager, dac, sampleRate, bitDepth, channels, allowResample).also {
                 _isBitPerfectActive.value = it.exact
                 _currentDeviceDescription.value = "${dac.productName ?: "USB DAC"} - ${it.description}"
             }

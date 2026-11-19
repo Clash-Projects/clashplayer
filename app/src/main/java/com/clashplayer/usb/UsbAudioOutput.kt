@@ -6,6 +6,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import com.clashplayer.dsp.Resampler
 import com.clashplayer.dsp.packPcm
 import java.io.Closeable
 import java.io.IOException
@@ -47,7 +48,7 @@ class UsbAudioOutput private constructor(
     private val volumeRange: IntRange?, // device volume in 1/256 dB
 ) : Closeable {
 
-    /** True when the DAC's format holds the source bits exactly (otherwise samples were truncated). */
+    /** True when the DAC runs at the source rate in a format holding every source bit (no resampling or truncation). */
     var exact = true
         private set
     val channels get() = alt.channels
@@ -190,6 +191,7 @@ class UsbAudioOutput private constructor(
         private const val VOLUME_CONTROL = 0x02
         private const val TIMEOUT_MS = 1000
         private const val USB_SPEED_HIGH = 3
+        private val STANDARD_RATES = listOf(44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000)
 
         fun isUsbAudio(device: UsbDevice): Boolean = (0 until device.configurationCount).any { c ->
             val cfg = device.getConfiguration(c)
@@ -198,10 +200,10 @@ class UsbAudioOutput private constructor(
 
         /**
          * Opens [device] (permission must already be granted) at exactly [sampleRate] with at least [channels]
-         * channels in a format holding [bitDepth] bits. Throws if the DAC can't run at that rate, since anything
-         * else would need resampling.
+         * channels in a format holding [bitDepth] bits. If the DAC can't run at that rate it throws, unless
+         * [allowResample] lets it pick the closest clean rate instead ([sampleRate] of the result tells which).
          */
-        fun open(manager: UsbManager, device: UsbDevice, sampleRate: Int, bitDepth: Int, channels: Int): UsbAudioOutput {
+        fun open(manager: UsbManager, device: UsbDevice, sampleRate: Int, bitDepth: Int, channels: Int, allowResample: Boolean = false): UsbAudioOutput {
             val conn = manager.openDevice(device) ?: throw IOException("Cannot open ${device.productName}")
             val claimed = mutableListOf<UsbInterface>()
             try {
@@ -230,18 +232,26 @@ class UsbAudioOutput private constructor(
                 // Detach the kernel's USB audio driver: from here on this app owns the DAC
                 iface(uac.acInterface, 0)?.let { if (conn.claimInterface(it, true)) claimed += it }
 
-                val rateOk: (UacAlt) -> Boolean = { a ->
-                    if (uac.uacVersion == 2) {
-                        val clock = resolveClock(uac, a.clockId)
-                        clock != null && clockRanges(conn, uac.acInterface, clock).any { sampleRate in it }
-                    } else {
-                        sampleRate in a.sampleRates || a.rateRange?.contains(sampleRate) == true
-                    }
+                // Rates each alt can run at: discrete rates as listed, continuous ranges as the standard rates inside them
+                val ratesOf: (UacAlt) -> List<Int> = { a ->
+                    val ranges = if (uac.uacVersion == 2) resolveClock(uac, a.clockId)?.let { clockRanges(conn, uac.acInterface, it) }.orEmpty()
+                    else a.sampleRates.map { it..it } + listOfNotNull(a.rateRange)
+                    ranges.flatMap { r -> if (r.first == r.last) listOf(r.first) else (STANDARD_RATES + sampleRate).filter { it in r } }
                 }
-                fun usableWith(min: Int) = uac.playbackAlts.filter { it.isPcm && it.channels >= min && it.subslotBytes in 2..4 && rateOk(it) }
+                val pcmAlts = uac.playbackAlts.filter { it.isPcm && it.subslotBytes in 2..4 }
+                val altRates = pcmAlts.associateWith(ratesOf)
+                fun usableWith(min: Int, r: Int) = pcmAlts.filter { it.channels >= min && r in altRates.getValue(it) }
+                fun usableAt(r: Int) = usableWith(channels.coerceAtLeast(2), r).ifEmpty { usableWith(2, r) }
                 // All source channels if the DAC can take them, else stereo (the caller downmixes)
-                val usable = usableWith(channels.coerceAtLeast(2)).ifEmpty { usableWith(2) }
+                var rate = sampleRate
+                var usable = usableAt(rate)
+                if (usable.isEmpty() && allowResample) {
+                    rate = Resampler.pickRate(sampleRate, pcmAlts.filter { it.channels >= 2 }.flatMap { altRates.getValue(it) })
+                        ?: throw IOException("DAC reports no sample rates")
+                    usable = usableAt(rate)
+                }
                 if (usable.isEmpty()) throw IOException("DAC has no PCM mode at $sampleRate Hz")
+                val rateOk: (UacAlt) -> Boolean = { rate in ratesOf(it) }
                 // Fewest channels that fit, then the smallest format holding every source bit (else the deepest)
                 val alt = usable.minWith(compareBy<UacAlt> { it.channels }
                     .thenBy { if (it.bitResolution >= bitDepth) 0 else 1 }
@@ -251,7 +261,7 @@ class UsbAudioOutput private constructor(
                 if (!conn.claimInterface(asIface, true)) throw IOException("Cannot claim streaming interface")
                 claimed += asIface
                 if (!conn.setInterface(asIface)) throw IOException("Cannot select alt setting ${alt.altSetting}")
-                setRate(conn, uac, alt, sampleRate)
+                setRate(conn, uac, alt, rate)
 
                 // Async endpoint without a feedback endpoint: the device clock comes from its capture stream
                 var capture: UacAlt? = null
@@ -264,14 +274,14 @@ class UsbAudioOutput private constructor(
                     if (!conn.claimInterface(capIface, true)) throw IOException("Cannot claim capture interface")
                     claimed += capIface
                     if (!conn.setInterface(capIface)) throw IOException("Cannot select capture alt ${capture.altSetting}")
-                    if (resolveClock(uac, capture.clockId) != resolveClock(uac, alt.clockId) || uac.uacVersion == 1) setRate(conn, uac, capture, sampleRate)
+                    if (resolveClock(uac, capture.clockId) != resolveClock(uac, alt.clockId) || uac.uacVersion == 1) setRate(conn, uac, capture, rate)
                 }
 
                 val idle = listOfNotNull(iface(alt.interfaceNumber, 0), capture?.let { iface(it.interfaceNumber, 0) })
                 val fu = uac.featureUnits.firstOrNull { it.sourceId == alt.terminalLink && it.hasVolume }
                 val range = fu?.let { volumeRange(conn, uac, it) }
-                return UsbAudioOutput(conn, claimed, idle, uac, alt, capture, sampleRate, highSpeed, fu, range)
-                    .also { it.exact = alt.bitResolution >= bitDepth }
+                return UsbAudioOutput(conn, claimed, idle, uac, alt, capture, rate, highSpeed, fu, range)
+                    .also { it.exact = alt.bitResolution >= bitDepth && rate == sampleRate }
             } catch (e: Exception) {
                 claimed.forEach { conn.releaseInterface(it) }
                 conn.close()

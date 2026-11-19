@@ -67,6 +67,7 @@ import com.clashplayer.dsp.model.AutoEqRepository
 import com.clashplayer.dsp.model.EqualizerPreset
 import com.clashplayer.dsp.model.ReverbPreset
 import com.clashplayer.service.AudioDriverType
+import com.clashplayer.service.PlaybackSettings
 import com.clashplayer.ui.components.EqualizerSliders
 import com.clashplayer.ui.components.GlyphButton
 import com.clashplayer.ui.components.NotchToggle
@@ -89,7 +90,9 @@ fun EqualizerStudio(
     currentDriver: AudioDriverType,
     onDriverSelected: (AudioDriverType) -> Unit,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    settings: PlaybackSettings = PlaybackSettings(),
+    onReplayGainChanged: () -> Unit = {}
 ) {
     val eqState by audioEngine.equalizerStateFlow.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -118,7 +121,7 @@ fun EqualizerStudio(
             NotchToggle(eqState.enabled, { audioEngine.setEqualizerEnabled(it) })
         }
 
-        TickSelector(listOf("Graphic EQ", "Tone & Space", "AutoEQ", "Output"), selectedTab, { selectedTab = it })
+        TickSelector(listOf("Graphic EQ", "Tone & Space", "AutoEQ", "Engine", "Output"), selectedTab, { selectedTab = it })
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -145,7 +148,9 @@ fun EqualizerStudio(
                 onApplyPreset = { preset -> audioEngine.applyPreset(preset) }
             )
 
-            3 -> AudioOutputTab(
+            3 -> EngineTab(audioEngine, settings, onReplayGainChanged)
+
+            4 -> AudioOutputTab(
                 currentDriver = currentDriver,
                 isDvcActive = dvcEnabled,
                 onToggleDvc = { dvcEnabled = it; audioEngine.dvcEnabled = it },

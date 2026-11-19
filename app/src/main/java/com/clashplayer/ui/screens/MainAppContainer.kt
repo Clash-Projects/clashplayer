@@ -107,7 +107,9 @@ fun MainAppContainer(
                 audioEngine = audioEngine,
                 currentDriver = driverType,
                 onDriverSelected = { service.switchAudioDriver(it) },
-                onBack = { selectedTab = NavTab.HOME }
+                onBack = { selectedTab = NavTab.HOME },
+                settings = service.settings,
+                onReplayGainChanged = service::refreshReplayGain
             )
             NavTab.VISUALIZER -> VisualizerScreen(
                 audioEngine = audioEngine,

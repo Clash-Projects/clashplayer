@@ -12,6 +12,9 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.clashplayer.dsp.AudioEngine
+import com.clashplayer.dsp.ReplayGainInfo
+import com.clashplayer.dsp.ReplayGainMode
+import com.clashplayer.dsp.Resampler
 import com.clashplayer.dsp.packPcm
 import com.clashplayer.model.Lyrics
 import com.clashplayer.model.Track
@@ -19,7 +22,10 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.math.min
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
 
 class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
 
@@ -62,8 +68,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     var isShuffle: Boolean = false
     var repeatMode: Int = REPEAT_ALL // 0 = off, 1 = all, 2 = one
 
-    var crossfadeDurationSec: Float = 2.0f
-    var gaplessEnabled: Boolean = true
+    val settings = PlaybackSettings()
 
     private var sleepTimerJob: Job? = null
     private val _sleepTimerRemainingMinutes = MutableStateFlow<Int?>(null)
@@ -89,7 +94,12 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
     }
 
-    private var decoder: AudioDecoder? = null
+    @Volatile private var decoder: AudioDecoder? = null
+    // Converts to the USB DAC's rate when it can't run at the track's own
+    @Volatile private var resampler: Resampler? = null
+    @Volatile private var pendingWarmupMs = 0
+    @Volatile private var fadingOut = false
+    private var pauseGen = 0
     // Seeks are handed to the audio thread, which owns the decoder
     @Volatile private var pendingSeekMs = -1L
 
@@ -114,6 +124,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         // MediaStore often has no duration for DSD; the decoder's own length is authoritative when known
         if (dec.durationMs > 0) _durationMs.value = dec.durationMs
         _currentLyrics.value = null // no lyrics source yet; never show placeholder text as if it were real
+        audioEngine.replayGainDb = replayGainFor(track)
 
         initOutput(dec)
 
@@ -167,12 +178,16 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         audioEngine.bypassChannels = dec.outChannels
         audioEngine.updateSampleRate(dec.sampleRate)
         outputManager.onTrackFormatChanged(dec.sampleRate, dec.bitDepth)
+        resampler = if (usb.sampleRate != dec.sampleRate) Resampler(dec.sampleRate, usb.sampleRate, dec.outChannels) else null
+        if (!(dec is DsdDecoder && dec.useDop)) pendingWarmupMs = settings.usbWarmupMs // DoP silence would need DSD markers
     }
 
     private fun initOutput(dec: AudioDecoder) {
         audioTrack?.release()
         audioTrack = null
         closeUsbOutput()
+        resampler = null
+        pendingWarmupMs = 0
         val retry: () -> Unit = { serviceScope.launch(Dispatchers.Main) { reopenOutput() } }
 
         // DSD: DoP carries it bit-exact, but needs DSD/16 Hz at >= 24 bits on every channel and the DAC's own
@@ -189,7 +204,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
 
         // 1. Own USB Audio driver: exclusive, any Android version, DAC clocked at the track's rate
-        outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry)?.let { return useUsb(it, dec) }
+        outputManager.openUsbDirect(dec.sampleRate, dec.bitDepth, dec.channels, retry, settings.usbResample)?.let { return useUsb(it, dec) }
         audioEngine.bypassSoftwareVolume = false
         audioEngine.visualizerFeed = true
         audioEngine.bypassChannels = 2
@@ -235,7 +250,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         if (decoder == null) return
         if (audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return
         _isPlaying.value = true
+        pauseGen++ // cancels a pending fade-out pause
+        fadingOut = false
         startForeground(NOTIFICATION_ID, buildNotification(track, true))
+        if (fadeApplies()) { audioEngine.fadeTo(0f, 0); audioEngine.fadeTo(1f, settings.fadeMs) } else audioEngine.fadeTo(1f, 0)
 
         audioTrack?.play()
         startAudioLoop()
@@ -259,7 +277,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             val dop = dec is DsdDecoder && dec.useDop
             return OutputClock(source, "USB ${usb.classLabel} direct", usb.sampleRate, usb.measuredRateHz,
                 usb.alt.bitResolution, usb.channels, "${usb.syncLabel} · ${usb.busLabel}", usb.exact,
-                if (dop) "DoP" else if (dec is DsdDecoder) "DSD→PCM" else "PCM")
+                if (dop) "DoP" else if (dec is DsdDecoder) "DSD→PCM" else if (resampler != null) "Resampled" else "PCM")
         }
         val at = audioTrack ?: return OutputClock.Idle
         // Measured consumption rate from successive hardware timestamps
@@ -307,22 +325,32 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     fun pause() {
+        val job = playbackJob
         _isPlaying.value = false
-        audioTrack?.pause()
-        playbackJob?.cancel()
         progressJob?.cancel()
         _currentTrack.value?.let {
             startForeground(NOTIFICATION_ID, buildNotification(it, false))
+        }
+        if (fadeApplies() && job?.isActive == true) {
+            // The loop plays the fade-out; then stop() lets the AudioTrack drain it instead of cutting it off
+            fadingOut = true
+            audioEngine.fadeTo(0f, settings.fadeMs)
+            val gen = ++pauseGen
+            serviceScope.launch(Dispatchers.Main) {
+                withTimeoutOrNull(settings.fadeMs + 500L) { job.join() }
+                if (gen == pauseGen && !_isPlaying.value) { fadingOut = false; job.cancel(); audioTrack?.stop() }
+            }
+        } else {
+            fadingOut = false
+            job?.cancel()
+            audioTrack?.pause()
         }
     }
 
     fun next() {
         val q = _queue.value
         if (q.isEmpty()) return
-        var nextIdx = _currentQueueIndex.value + 1
-        if (nextIdx >= q.size) {
-            nextIdx = if (repeatMode == REPEAT_ALL) 0 else _currentQueueIndex.value
-        }
+        val nextIdx = nextIndex(auto = false) ?: _currentQueueIndex.value
         _currentQueueIndex.value = nextIdx
         loadTrack(q[nextIdx], autoPlay = true)
     }
@@ -381,53 +409,253 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         playbackJob = serviceScope.launch(Dispatchers.Default) {
             val bufferSize = 2048
             val floatBuffer = FloatArray(bufferSize)
-            val pcmBuffer = java.nio.ByteBuffer.allocateDirect(bufferSize * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            val dec = decoder ?: return@launch
+            val pcmBuffer = java.nio.ByteBuffer.allocateDirect(bufferSize * 4 * 8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            var dec = decoder ?: return@launch
+            var stretched = FloatArray(0)
+            var resampled = FloatArray(0)
+            // Crossfade: the outgoing track keeps playing under the incoming one, which is already the current track
+            var outgoing: PullBuffer? = null
+            var xfadeFrames = 0
+            var xfadeDone = 0
+            var outgoingGain = 1f
+            val mixBuffer = FloatArray(bufferSize)
 
-            while (isActive && _isPlaying.value) {
-                val seek = pendingSeekMs
-                if (seek >= 0) {
-                    pendingSeekMs = -1L
-                    dec.seekTo(seek)
-                    audioTrack?.pause(); audioTrack?.flush(); audioTrack?.play()
-                    usbOutput?.flush() // drop queued packets so the new position is heard at once
+            /** Sends [n] processed samples to the active output; false if the output died. */
+            fun emit(src: FloatArray, n: Int): Boolean {
+                var data = src
+                var count = n
+                val ch = dec.outChannels
+                resampler?.let { r ->
+                    val need = r.maxOutFrames(n / ch) * ch
+                    if (resampled.size < need) resampled = FloatArray(need)
+                    count = r.process(src, n, resampled)
+                    data = resampled
                 }
-                val count = dec.read(floatBuffer)
-                if (count < 0) {
-                    // End of track: advance from outside this job, since loadTrack joins it (a child would deadlock)
-                    serviceScope.launch(Dispatchers.Main) { onTrackEnded() }
-                    break
-                }
-                if (count == 0) continue
-
-                // 64-bit float DSP pipeline execution (a no-op in bit-perfect mode)
-                audioEngine.processInterleavedStereo(floatBuffer, 0, count)
-
+                if (count == 0) return true
                 val usb = usbOutput
                 if (usb != null) {
-                    try {
+                    // Untouched samples go out as they are; scaled or resampled ones get dithered to the DAC's depth
+                    if (resampler != null || (audioEngine.bypassSoftwareVolume && audioEngine.volumeDb() != 0f)) {
+                        audioEngine.ditherer.process(data, count, ch, usb.alt.bitResolution, usb.sampleRate)
+                    }
+                    return try {
                         if (usb.hasHardwareVolume) usb.setVolumeDb(audioEngine.volumeDb())
-                        usb.write(floatBuffer, count, dec.outChannels)
+                        usb.write(data, count, ch)
+                        true
                     } catch (e: java.io.IOException) {
                         // DAC unplugged or stalled: reopen on whatever output is left, from outside this job
                         android.util.Log.w(TAG, "USB output failed", e)
                         outputManager.usbDirectSuspended = true
                         serviceScope.launch(Dispatchers.Main) { reopenOutput() }
-                        break
+                        false
                     }
-                    continue
                 }
-
                 // Output to AudioTrack in the encoding it was opened with
-                val bits = AudioOutputManager.precisionBits(outputEncoding)
                 if (outputEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                    audioTrack?.write(floatBuffer, 0, count, AudioTrack.WRITE_BLOCKING)
+                    audioTrack?.write(data, 0, count, AudioTrack.WRITE_BLOCKING)
                 } else {
-                    packPcm(floatBuffer, count, bits, pcmBuffer)
+                    packPcm(data, count, AudioOutputManager.precisionBits(outputEncoding), pcmBuffer)
                     audioTrack?.write(pcmBuffer, pcmBuffer.remaining(), AudioTrack.WRITE_BLOCKING)
                 }
+                return true
+            }
+
+            fun silence(ms: Int): Boolean {
+                val ch = dec.outChannels
+                var frames = (dec.sampleRate.toLong() * ms / 1000).toInt()
+                val zeros = FloatArray(bufferSize - bufferSize % ch)
+                while (frames > 0 && isActive) {
+                    val n = minOf(frames, zeros.size / ch)
+                    zeros.fill(0f) // emit may dither in place
+                    if (!emit(zeros, n * ch)) return false
+                    frames -= n
+                }
+                return true
+            }
+
+            try {
+                if (pendingWarmupMs > 0) { val ms = pendingWarmupMs; pendingWarmupMs = 0; if (!silence(ms)) return@launch }
+                while (isActive && (_isPlaying.value || fadingOut)) {
+                    val seek = pendingSeekMs
+                    if (seek >= 0) {
+                        pendingSeekMs = -1L
+                        dec.seekTo(seek)
+                        audioTrack?.pause(); audioTrack?.flush(); audioTrack?.play()
+                        usbOutput?.flush() // drop queued packets so the new position is heard at once
+                        resampler?.reset()
+                        audioEngine.tempoProcessor.reset()
+                        outgoing?.close(); outgoing = null; xfadeFrames = 0
+                        if (fadeApplies()) { audioEngine.fadeTo(0f, 0); audioEngine.fadeTo(1f, settings.seekFadeMs) }
+                    }
+
+                    // Crossfade starts once the remaining time fits in the crossfade length
+                    val xfMs = settings.crossfadeMs
+                    if (xfadeFrames == 0 && xfMs > 0 && !audioEngine.bitPerfect && dec.durationMs > 0) {
+                        val remaining = dec.durationMs - dec.positionUs / 1000
+                        if (remaining in 1..xfMs.toLong()) {
+                            val oldGain = audioEngine.replayGainDb
+                            val next = openNext(dec)
+                            if (next != null) {
+                                outgoing = PullBuffer(dec)
+                                xfadeFrames = (dec.sampleRate * remaining / 1000).toInt().coerceAtLeast(1)
+                                xfadeDone = 0
+                                dec = next.first
+                                adopt(next.first, next.second, closeOld = null)
+                                // The engine now applies the new track's ReplayGain; keep the old track at its own
+                                outgoingGain = 10f.pow((oldGain - audioEngine.replayGainDb) / 20f)
+                            } else {
+                                xfadeFrames = -1 // no compatible next track: don't retry every buffer
+                            }
+                        }
+                    }
+
+                    val count = dec.read(floatBuffer)
+                    if (count < 0) {
+                        // Gapless: same output format, so hand the open output straight to the next track
+                        val next = if (settings.gapless) openNext(dec) else null
+                        if (next != null) {
+                            val old = dec
+                            dec = next.first
+                            adopt(next.first, next.second, closeOld = old)
+                            if (xfadeFrames < 0) xfadeFrames = 0
+                            if (settings.silenceMs > 0 && !silence(settings.silenceMs)) break
+                            continue
+                        }
+                        // End of track: advance from outside this job, since loadTrack joins it (a child would deadlock)
+                        serviceScope.launch(Dispatchers.Main) { onTrackEnded() }
+                        break
+                    }
+                    if (count == 0) continue
+
+                    if (xfadeFrames > 0) {
+                        val got = outgoing?.take(mixBuffer, count) ?: 0
+                        if (got < count) java.util.Arrays.fill(mixBuffer, got, count, 0f)
+                        var i = 0
+                        while (i < count - 1) {
+                            val t = ((xfadeDone + i / 2).toFloat() / xfadeFrames).coerceAtMost(1f) * (PI.toFloat() / 2)
+                            val gOut = cos(t) * outgoingGain
+                            val gIn = sin(t)
+                            floatBuffer[i] = floatBuffer[i] * gIn + mixBuffer[i] * gOut
+                            floatBuffer[i + 1] = floatBuffer[i + 1] * gIn + mixBuffer[i + 1] * gOut
+                            i += 2
+                        }
+                        xfadeDone += count / 2
+                        if (got < count) { outgoing?.close(); outgoing = null }
+                        if (xfadeDone >= xfadeFrames) { outgoing?.close(); outgoing = null; xfadeFrames = 0 }
+                    }
+
+                    var data = floatBuffer
+                    var n = count
+                    if (!audioEngine.bitPerfect) {
+                        // Tempo changes the sample count, so it runs ahead of the in-place DSP chain
+                        val tp = audioEngine.tempoProcessor
+                        val need = tp.maxOut(count)
+                        if (stretched.size < need) stretched = FloatArray(need)
+                        n = tp.process(floatBuffer, count, stretched)
+                        data = stretched
+                    }
+                    if (n == 0) continue
+
+                    // 64-bit float DSP pipeline execution (a no-op in bit-perfect mode)
+                    audioEngine.processInterleavedStereo(data, 0, n)
+                    if (!emit(data, n)) break
+
+                    if (fadingOut && audioEngine.fadeDone && !_isPlaying.value) break
+                }
+            } finally {
+                outgoing?.close()
             }
         }
+    }
+
+    /** Pulls exact sample counts from a decoder whose reads return whatever fits. */
+    private class PullBuffer(private val dec: AudioDecoder) {
+        private val chunk = FloatArray(2048)
+        private var len = 0
+        private var pos = 0
+        private var ended = false
+
+        fun take(dst: FloatArray, n: Int): Int {
+            var got = 0
+            while (got < n && !ended) {
+                if (pos == len) {
+                    val r = dec.read(chunk)
+                    if (r < 0) ended = true else { len = r; pos = 0 }
+                    continue
+                }
+                val k = minOf(n - got, len - pos)
+                System.arraycopy(chunk, pos, dst, got, k)
+                got += k
+                pos += k
+            }
+            return got
+        }
+
+        fun close() = dec.close()
+    }
+
+    private fun fadeApplies() = settings.fades && !audioEngine.bitPerfect
+
+    /** Queue entry to play next; null to stop (end of queue with repeat off). */
+    private fun nextIndex(auto: Boolean): Int? {
+        val q = _queue.value
+        if (q.isEmpty()) return null
+        val cur = _currentQueueIndex.value
+        if (auto && repeatMode == REPEAT_ONE) return cur
+        if (isShuffle && q.size > 1) return (q.indices - cur).random()
+        return if (cur + 1 < q.size) cur + 1 else if (repeatMode == REPEAT_ALL) 0 else null
+    }
+
+    /**
+     * Opens the next track if it can continue on the output as it is now open: same rate, and for bit-perfect
+     * output the same channels and depth too. Runs on the audio thread.
+     */
+    private fun openNext(cur: AudioDecoder): Pair<AudioDecoder, Int>? {
+        val idx = nextIndex(auto = true) ?: return null
+        val next = runCatching { openDecoder(_queue.value[idx].uri) }.getOrNull() ?: return null
+        val fits = next.sampleRate == cur.sampleRate && (!audioEngine.bitPerfect || (next.javaClass == cur.javaClass &&
+            next.channels == cur.channels && next.bitDepth == cur.bitDepth &&
+            (next !is DsdDecoder || next.dsdRate == (cur as DsdDecoder).dsdRate)))
+        if (!fits) { next.close(); return null }
+        next.outChannels = cur.outChannels
+        if (next is DsdDecoder) next.useDop = (cur as DsdDecoder).useDop
+        return next to idx
+    }
+
+    /** Makes [next] the current track without touching the output. */
+    private fun adopt(next: AudioDecoder, idx: Int, closeOld: AudioDecoder?) {
+        decoder = next
+        closeOld?.close()
+        val track = _queue.value[idx]
+        _currentQueueIndex.value = idx
+        _currentTrack.value = track
+        _durationMs.value = if (next.durationMs > 0) next.durationMs else track.durationMs
+        _currentPositionMs.value = 0L
+        _currentLyrics.value = null
+        audioEngine.replayGainDb = replayGainFor(track)
+        serviceScope.launch(Dispatchers.Main) { if (_isPlaying.value) startForeground(NOTIFICATION_ID, buildNotification(track, true)) }
+    }
+
+    private fun replayGainFor(track: Track): Float {
+        val s = settings
+        if (s.replayGain == ReplayGainMode.OFF) return 0f
+        val info = runCatching {
+            contentResolver.openFileDescriptor(track.uri, "r")?.use { pfd ->
+                java.io.FileInputStream(pfd.fileDescriptor).channel.use { ch ->
+                    ReplayGainInfo.read { at, n ->
+                        val b = java.nio.ByteBuffer.allocate(n.coerceIn(0, 1 shl 24))
+                        ch.read(b, at)
+                        b.array().copyOf(b.position())
+                    }
+                }
+            }
+        }.getOrNull() ?: ReplayGainInfo()
+        return info.gainDb(s.replayGain, s.replayGainPreampDb, s.untaggedGainDb, s.preventClipping)
+    }
+
+    /** Re-reads the current track's ReplayGain after a settings change. */
+    fun refreshReplayGain() {
+        audioEngine.replayGainDb = _currentTrack.value?.let(::replayGainFor) ?: 0f
     }
 
     private fun startProgressTracker() {
@@ -442,11 +670,9 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     private fun onTrackEnded() {
-        when {
-            repeatMode == REPEAT_ONE -> _currentTrack.value?.let { loadTrack(it, autoPlay = true) }
-            repeatMode == REPEAT_ALL || _currentQueueIndex.value < _queue.value.size - 1 -> next()
-            else -> pause()
-        }
+        val idx = nextIndex(auto = true) ?: return pause()
+        _currentQueueIndex.value = idx
+        loadTrack(_queue.value[idx], autoPlay = true)
     }
 
     override fun onAudioFocusChange(focusChange: Int) {
@@ -456,10 +682,17 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
                 pause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (settings.ignoreShortFocusLoss) return
                 resumeOnFocusGain = _isPlaying.value
                 pause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                if (settings.ignoreShortFocusLoss) return
+                if (settings.pauseInsteadOfDuck) {
+                    resumeOnFocusGain = _isPlaying.value
+                    pause()
+                    return
+                }
                 // Restore the user's own volume afterwards, not a hardcoded one
                 if (volumeBeforeDuck.isNaN()) volumeBeforeDuck = audioEngine.volume
                 audioEngine.volume = volumeBeforeDuck * 0.2f

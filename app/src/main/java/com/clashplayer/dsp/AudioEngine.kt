@@ -70,7 +70,23 @@ class AudioEngine(
     val stereoProcessor = StereoProcessor()
     val reverbProcessor = ReverbProcessor(sampleRate)
     val limiterProcessor = LimiterProcessor(sampleRate)
-    val resamplerEngine = ResamplerEngine()
+    val compressor = CompressorProcessor(sampleRate)
+    /** Pitch-preserving tempo; applied by the playback loop before this chain, since it changes the sample count. */
+    val tempoProcessor = TempoProcessor(sampleRate)
+    /** Dither for integer outputs; the output stage calls it once it knows the bit depth. */
+    val ditherer = Ditherer()
+
+    /** ReplayGain for the current track, in dB (set by the player). */
+    @Volatile var replayGainDb = 0f
+    /** Pull EQ/tone boosts back near full volume so they can't overload (DVC only). */
+    @Volatile var smoothGains = true
+    // Largest boost of the current EQ/tone curve, refreshed with the coefficients
+    private var eqPeakDb = 0f
+
+    // Play/pause/seek fade envelope, applied after the master gain
+    @Volatile private var fadeLevel = 1f
+    @Volatile private var fadeTarget = 1f
+    @Volatile private var fadeStep = 0f
 
     // 60fps Visualizer data buffers
     private val fftSize = 512
@@ -96,6 +112,8 @@ class AudioEngine(
             parametricFilters.forEach { it.updateSampleRate(newRate) }
             reverbProcessor.updateSampleRate(newRate)
             limiterProcessor.updateSampleRate(newRate)
+            compressor.updateSampleRate(newRate)
+            tempoProcessor.updateSampleRate(newRate)
             updateAllFilters()
         }
     }
@@ -169,7 +187,35 @@ class AudioEngine(
             val gain = if (equalizerEnabled && band.enabled) band.getGainDb() else 0.0f
             parametricFilters[i].configure(FilterType.fromId(band.type), band.frequency, gain, band.q)
         }
+        eqPeakDb = peakBoostDb()
     }
+
+    /** Highest point of the combined EQ + tone response on a 1/6-octave grid, in dB (>= 0). */
+    private fun peakBoostDb(): Float {
+        var peak = 0.0
+        var f = 20.0
+        while (f < min(20000.0, sampleRate * 0.49)) {
+            var db = 0.0
+            if (toneEnabled) db += bassFilter.magnitudeDb(f) + trebleFilter.magnitudeDb(f)
+            if (equalizerEnabled) {
+                if (isParametricMode) parametricBands.forEachIndexed { i, b -> if (b.enabled) db += parametricFilters[i].magnitudeDb(f) }
+                else graphicBands.forEachIndexed { i, b -> if (b.enabled) db += graphicFilters[i].magnitudeDb(f) }
+            }
+            peak = max(peak, db)
+            f *= 1.122462 // 2^(1/6)
+        }
+        return peak.toFloat()
+    }
+
+    /** Ramps the fade envelope to [target] (0..1) over [ms]; 0 ms jumps. Only the DSP path fades. */
+    fun fadeTo(target: Float, ms: Int) {
+        val t = target.coerceIn(0f, 1f)
+        if (ms <= 0) { fadeLevel = t; fadeTarget = t; return }
+        fadeStep = abs(t - fadeLevel) / (ms * 0.001f * sampleRate).coerceAtLeast(1f)
+        fadeTarget = t
+    }
+
+    val fadeDone: Boolean get() = fadeLevel == fadeTarget
 
     /**
      * Compute effective DVC gain multiplier.
@@ -177,9 +223,11 @@ class AudioEngine(
      */
     fun computeEffectiveVolumeGain(): Float {
         // System volume does the attenuation; only reserve headroom so EQ boosts can't clip
-        if (!dvcEnabled) return 10.0.pow(-dvcHeadroomDb.coerceIn(0f, 24f) / 20.0).toFloat()
+        if (!dvcEnabled) return 10.0.pow((replayGainDb - dvcHeadroomDb.coerceIn(0f, 24f)) / 20.0).toFloat()
 
-        val db = volumeDb() ?: return 0.0f
+        var db = (volumeDb() ?: return 0.0f) + replayGainDb
+        // Near full volume a boost would clip: give back exactly the part that would go over 0 dBFS
+        if (smoothGains) db -= (db + preampDb + eqPeakDb).coerceAtLeast(0f)
         return 10.0.pow(db / 20.0).toFloat()
     }
 
@@ -237,8 +285,12 @@ class AudioEngine(
         val end = offset + sampleCount
         while (i < end - 1) {
             totalMasterGain += gainStep
-            var left = buffer[i] * totalMasterGain
-            var right = buffer[i + 1] * totalMasterGain
+            if (fadeLevel != fadeTarget) {
+                fadeLevel = if (fadeLevel < fadeTarget) min(fadeTarget, fadeLevel + fadeStep) else max(fadeTarget, fadeLevel - fadeStep)
+            }
+            val g = totalMasterGain * fadeLevel
+            var left = buffer[i] * g
+            var right = buffer[i + 1] * g
 
             // Apply Tone Controls (Bass / Treble)
             if (toneEnabled) {
@@ -279,13 +331,15 @@ class AudioEngine(
             left = stereoTemp[0]
             right = stereoTemp[1]
 
+            if (compressor.enabled) {
+                compressor.process(left, right, stereoTemp)
+                left = stereoTemp[0]
+                right = stereoTemp[1]
+            }
+
             // Soft-knee peak limiting
             left = limiterProcessor.process(left)
             right = limiterProcessor.process(right)
-
-            // Dither to 16/24 bit
-            left = resamplerEngine.applyDither(left, 24, 0)
-            right = resamplerEngine.applyDither(right, 24, 1)
 
             buffer[i] = left
             buffer[i + 1] = right
