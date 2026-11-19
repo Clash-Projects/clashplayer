@@ -15,7 +15,9 @@ data class Track(
     val format: String = "FLAC",
     val bitrateKbps: Int = 1411,
     val trackNumber: Int = 1,
-    val year: Int = 0
+    val year: Int = 0,
+    /** File name with extension; used to match playlist entries. */
+    val fileName: String = ""
 )
 
 data class Album(
@@ -37,5 +39,7 @@ data class Playlist(
     val id: Long,
     val name: String,
     val trackCount: Int,
-    val trackIds: List<Long> = emptyList()
+    val trackIds: List<Long> = emptyList(),
+    /** System playlists made by other apps are shown but not edited here. */
+    val readOnly: Boolean = false
 )

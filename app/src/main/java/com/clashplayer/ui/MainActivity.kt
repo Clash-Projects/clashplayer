@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,11 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import com.clashplayer.model.Album
-import com.clashplayer.model.Artist
-import com.clashplayer.model.LocalMediaRepository
-import com.clashplayer.model.Playlist
-import com.clashplayer.model.Track
+import com.clashplayer.model.MediaLibrary
 import com.clashplayer.service.PlaybackService
 import com.clashplayer.ui.screens.MainAppContainer
 import com.clashplayer.ui.theme.ClashTheme
@@ -55,13 +52,10 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        loadMediaLibrary()
+        library.refresh()
     }
 
-    private var tracks by mutableStateOf<List<Track>>(emptyList())
-    private var albums by mutableStateOf<List<Album>>(emptyList())
-    private var artists by mutableStateOf<List<Artist>>(emptyList())
-    private var playlists by mutableStateOf<List<Playlist>>(emptyList())
+    private val library by lazy { MediaLibrary(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,14 +70,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             ClashTheme {
                 val service = playbackService
+                val lib by library.state.collectAsState()
                 if (service != null) {
                     MainAppContainer(
                         service = service,
                         audioEngine = service.audioEngine,
-                        tracks = tracks,
-                        albums = albums,
-                        artists = artists,
-                        playlists = playlists
+                        tracks = lib.tracks,
+                        albums = lib.albums,
+                        artists = lib.artists,
+                        playlists = lib.playlists,
+                        library = library
                     )
                 } else {
                     Box(
@@ -103,24 +99,9 @@ class MainActivity : ComponentActivity() {
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
-
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
-            loadMediaLibrary()
-        } else {
-            permissionLauncher.launch(permission)
-            loadMediaLibrary()
-        }
-    }
-
-    private fun loadMediaLibrary() {
-        val loadedTracks = LocalMediaRepository.queryLocalTracks(this)
-        tracks = loadedTracks
-        albums = LocalMediaRepository.buildAlbums(loadedTracks)
-        artists = LocalMediaRepository.buildArtists(loadedTracks)
-        playlists = listOf(
-            Playlist(1L, "Audiophile Masters", loadedTracks.size, loadedTracks.map { it.id }),
-            Playlist(2L, "Hi-Res FLAC Favorites", loadedTracks.take(5).size, loadedTracks.take(5).map { it.id })
-        )
+        // Added folders don't need the media permission, so scan now either way; the grant triggers a rescan
+        library.refresh()
+        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) permissionLauncher.launch(permission)
     }
 
     override fun onStop() {

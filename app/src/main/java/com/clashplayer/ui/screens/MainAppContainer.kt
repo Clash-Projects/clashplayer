@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.clashplayer.dsp.AudioEngine
 import com.clashplayer.model.Album
 import com.clashplayer.model.Artist
+import com.clashplayer.model.MediaLibrary
 import com.clashplayer.model.Playlist
 import com.clashplayer.model.Track
 import com.clashplayer.service.PlaybackService
@@ -66,7 +67,8 @@ fun MainAppContainer(
     albums: List<Album>,
     artists: List<Artist>,
     playlists: List<Playlist>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    library: MediaLibrary? = null
 ) {
     var selectedTab by remember { mutableStateOf(NavTab.HOME) }
     var isNowPlayingExpanded by remember { mutableStateOf(false) }
@@ -91,7 +93,7 @@ fun MainAppContainer(
                 currentTrack = currentTrack,
                 isPlaying = isPlaying,
                 driverType = driverType,
-                onTrackClick = { service.playTrack(it) },
+                onTrackClick = { t -> service.setQueue(tracks, tracks.indexOfFirst { it.id == t.id }) },
                 onOpenSearch = { selectedTab = NavTab.LIBRARY }
             )
             NavTab.LIBRARY -> LibraryScreen(
@@ -101,7 +103,9 @@ fun MainAppContainer(
                 playlists = playlists,
                 currentTrack = currentTrack,
                 isPlaying = isPlaying,
-                onTrackClick = { service.playTrack(it) }
+                onTrackClick = { service.playTrack(it) },
+                library = library,
+                onPlayQueue = { list, i -> service.setQueue(list, i) }
             )
             NavTab.EQUALIZER -> EqualizerStudio(
                 audioEngine = audioEngine,

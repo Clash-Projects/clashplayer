@@ -3,6 +3,7 @@ package com.clashplayer.ui.components
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -98,11 +99,12 @@ fun LevelBars(playing: Boolean, modifier: Modifier = Modifier, color: Color = Ph
  * artist, duration in mono. No card: rows are separated by a hairline, like entries in a log.
  */
 @Composable
-fun LedgerRow(index: Int, track: Track, isCurrent: Boolean, isPlaying: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+fun LedgerRow(index: Int, track: Track, isCurrent: Boolean, isPlaying: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
     Row(
         modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onLongClick = onLongClick, onClick = onClick)
             .drawBehind { drawLine(Color.White.copy(alpha = 0.06f), Offset(0f, size.height), Offset(size.width, size.height), 1f) }
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
