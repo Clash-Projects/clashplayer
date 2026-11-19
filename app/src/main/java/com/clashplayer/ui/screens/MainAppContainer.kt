@@ -87,6 +87,7 @@ fun MainAppContainer(
     val durationMs by service.durationMs.collectAsState()
     val driverType by service.outputManager.selectedDriver.collectAsState()
     val currentLyrics by service.currentLyrics.collectAsState()
+    val volume by service.volume.collectAsState()
     val colors = rememberArtworkColors(currentTrack?.albumArtUri)
     val energy = remember(audioEngine) { { audioEngine.energy() } }
     val progressFraction = if (durationMs > 0) (currentPositionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
@@ -189,7 +190,9 @@ fun MainAppContainer(
                 isNowPlayingExpanded = false
                 selectedTab = NavTab.EQUALIZER
             },
-            onOpenSignalPath = { isSignalPathExpanded = true }
+            onOpenSignalPath = { isSignalPathExpanded = true },
+            volume = { volume },
+            onVolumeChange = service::setVolume
         )
 
         SignalPathInspectorSheet(

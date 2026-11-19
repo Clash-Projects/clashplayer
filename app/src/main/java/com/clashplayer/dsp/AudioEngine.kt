@@ -34,6 +34,9 @@ class AudioEngine(
     @Volatile var bitPerfect: Boolean = false
     // Bit-perfect to a DAC with no volume control of its own: still apply the volume curve, or it plays at full scale
     @Volatile var bypassSoftwareVolume: Boolean = false
+    // Set by our own USB driver, which Android's volume never reaches: true = DAC has no volume, so software must
+    // (whatever the DVC setting); false = the DAC does it, so software mustn't too; null = follow DVC settings
+    @Volatile var forcedDvc: Boolean? = null
     // Off for streams that aren't audio samples (DoP), so the visualizer doesn't draw their bit patterns
     @Volatile var visualizerFeed: Boolean = true
     /** Channels per frame in bypass mode (multichannel pass-through); the DSP path is always stereo. */
@@ -246,7 +249,7 @@ class AudioEngine(
      */
     fun computeEffectiveVolumeGain(): Float {
         // System volume does the attenuation; only reserve headroom so EQ boosts can't clip
-        if (!dvcEnabled || !outputAllowsDvc) {
+        if (!(forcedDvc ?: (dvcEnabled && outputAllowsDvc))) {
             val headroom = if (outputHeadroom && outputAllowsEq) dvcHeadroomDb.coerceIn(0f, 24f) else 0f
             return 10.0.pow((replayGainDb - headroom) / 20.0).toFloat()
         }

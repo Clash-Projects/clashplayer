@@ -138,6 +138,25 @@ class LimiterProcessorTest {
     }
 
     @Test
+    fun testHotBassIsLimitedWithSteadyGainNotWaveformRateDistortion() {
+        // A 0 dBFS 40 Hz tone into the default -3 dB ceiling: the old envelope rippled with every bass cycle (crackle)
+        val limiter = LimiterProcessor(sampleRate = sampleRate)
+        limiter.interSampleHeadroom = true
+        var minGain = Float.MAX_VALUE
+        var maxGain = 0f
+        for (i in 0 until sampleRate) {
+            val x = sin(2.0 * PI * 40.0 * i / sampleRate).toFloat()
+            val y = limiter.process(x, 0)
+            limiter.process(x, 1)
+            if (i > sampleRate / 4 && abs(x) > 0.2f) {
+                val g = y / x
+                minGain = minOf(minGain, g); maxGain = maxOf(maxGain, g)
+            }
+        }
+        assertTrue("Gain must hold steady across the cycle ($minGain..$maxGain)", maxGain - minGain < 0.01f)
+    }
+
+    @Test
     fun testEstimateTruePeakParabolicCalculation() {
         val limiter = LimiterProcessor(sampleRate = sampleRate)
         // Symmetric peak: y0 = 0.5, y1 = 0.8, y2 = 0.5 -> peak at 0 is 0.8

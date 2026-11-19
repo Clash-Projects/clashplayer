@@ -86,6 +86,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         outputManager = AudioOutputManager(this)
         store = SettingsStore(this)
         store.load(audioEngine, settings)?.let(outputManager::selectDriver)
+        _volume.value = audioEngine.volume
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
         createNotificationChannel()
 
@@ -125,21 +126,38 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
     }
 
+    private val _volume = MutableStateFlow(1f)
+    /** In-app volume 0..1 (the Now Playing slider). */
+    val volume: StateFlow<Float> = _volume.asStateFlow()
+
+    /** Sets the app volume; the audio loop sends it to the DAC's hardware volume, or applies it in software. */
+    fun setVolume(v: Float) {
+        val c = v.coerceIn(0f, 1f)
+        audioEngine.volume = c
+        _volume.value = c
+    }
+
+    /** Volume rocker: our own USB driver ignores Android's volume, so there the keys move the app volume. */
+    fun stepVolume(up: Boolean) {
+        if (usbOutput != null) setVolume(audioEngine.volume + if (up) 0.05f else -0.05f)
+        else audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+    }
+
+    private var lastStreamVolume = -1
+
+    /**
+     * Mirrors a system media volume change onto the app volume, only on our own USB driver. Elsewhere Android
+     * already applies it, and copying it into the app too would attenuate twice.
+     */
     fun syncSystemVolume() {
         try {
             val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            if (max > 0) {
-                audioEngine.volumeSteps = max
-                val fraction = (current.toFloat() / max.toFloat()).coerceIn(0f, 1f)
-                audioEngine.volume = fraction
-                val db = audioEngine.volumeDb()
-                usbOutput?.let { usb ->
-                    if (usb.hasHardwareVolume) {
-                        usb.setVolumeDb(db)
-                    }
-                }
-            }
+            // The observer fires on every system setting (brightness etc.); only a real change may move the volume
+            if (max <= 0 || current == lastStreamVolume) return
+            val first = lastStreamVolume < 0
+            lastStreamVolume = current
+            if (!first && usbOutput != null) setVolume(current.toFloat() / max)
         } catch (t: Throwable) {
             android.util.Log.w(TAG, "Failed to sync system volume: ${t.message}")
         }
@@ -250,6 +268,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         if (!bitstream) dec.outChannels = if (usb.channels >= dec.channels) dec.channels else 2
         audioEngine.bitPerfect = usb.exact
         audioEngine.bypassSoftwareVolume = !usb.hasHardwareVolume
+        audioEngine.forcedDvc = !usb.hasHardwareVolume
         audioEngine.visualizerFeed = !bitstream
         audioEngine.bypassChannels = dec.outChannels
         audioEngine.updateSampleRate(dec.sampleRate)
@@ -264,6 +283,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
     private fun useDspPath(dec: AudioDecoder) {
         audioEngine.bitPerfect = false
         audioEngine.bypassSoftwareVolume = false
+        audioEngine.forcedDvc = null
         audioEngine.visualizerFeed = true
         audioEngine.bypassChannels = 2
         dec.outChannels = 2
