@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -50,21 +48,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clashplayer.diagnostics.DiagnosticsManager
 import com.clashplayer.diagnostics.LogEntry
 import com.clashplayer.diagnostics.LogLevel
-import com.clashplayer.ui.components.FrostedGlassBox
-import com.clashplayer.ui.theme.DarkSurface
-import com.clashplayer.ui.theme.GlassBorder
-import com.clashplayer.ui.theme.NeonCyan
-import com.clashplayer.ui.theme.NeonPink
-import com.clashplayer.ui.theme.NeonPurple
-import com.clashplayer.ui.theme.TextPrimary
-import com.clashplayer.ui.theme.TextSecondary
+import com.clashplayer.ui.components.ObsidianPanel
+import com.clashplayer.ui.theme.Ember
+import com.clashplayer.ui.theme.Ink
+import com.clashplayer.ui.theme.InkDim
+import com.clashplayer.ui.theme.Mono
+import com.clashplayer.ui.theme.ObsidianRaised
+import com.clashplayer.ui.theme.Phosphor
+import com.clashplayer.ui.theme.Signal
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -100,12 +97,12 @@ fun DiagnosticsSheet(
                     Text(
                         text = "Diagnostics & Crash Logs",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        color = TextPrimary
+                        color = Ink
                     )
                     Text(
                         text = "Audio pipeline telemetry, hardware state & crash reports",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = InkDim
                     )
                 }
 
@@ -114,19 +111,19 @@ fun DiagnosticsSheet(
                     modifier = Modifier
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(DarkSurface)
+                        .background(ObsidianRaised)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
-                        tint = TextPrimary
+                        tint = Ink
                     )
                 }
             }
 
             // Crash Alert Banner (if crash exists)
             if (hasCrash && latestCrashReport != null) {
-                FrostedGlassBox(
+                ObsidianPanel(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { showCrashDetails = !showCrashDetails },
@@ -141,20 +138,20 @@ fun DiagnosticsSheet(
                         Icon(
                             imageVector = Icons.Default.Warning,
                             contentDescription = null,
-                            tint = NeonPink,
+                            tint = Signal,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Fatal Crash Recorded on Previous Run",
-                                color = NeonPink,
+                                color = Signal,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp
                             )
                             Text(
                                 text = if (showCrashDetails) "Tap to collapse stack trace" else "Tap to inspect crash stack trace",
-                                color = TextSecondary,
+                                color = InkDim,
                                 fontSize = 11.sp
                             )
                         }
@@ -168,16 +165,16 @@ fun DiagnosticsSheet(
                             .height(180.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color.Black.copy(alpha = 0.8f))
-                            .border(1.dp, NeonPink.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .border(1.dp, Signal.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                             .padding(10.dp)
                     ) {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
                             item {
                                 Text(
                                     text = latestCrashReport,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = Mono,
                                     fontSize = 10.sp,
-                                    color = NeonPink.copy(alpha = 0.9f),
+                                    color = Signal.copy(alpha = 0.9f),
                                     lineHeight = 14.sp
                                 )
                             }
@@ -207,19 +204,19 @@ fun DiagnosticsSheet(
                         DiagnosticsManager.shareDiagnostics(context)
                     },
                     modifier = Modifier.weight(1.4f),
-                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                    colors = ButtonDefaults.buttonColors(containerColor = Phosphor),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Share,
                         contentDescription = null,
-                        tint = DarkSurface,
+                        tint = Color.Black,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Export Logs",
-                        color = DarkSurface,
+                        color = Color.Black,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
                     )
@@ -241,11 +238,11 @@ fun DiagnosticsSheet(
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = null,
-                        tint = TextPrimary,
+                        tint = Ink,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy", color = TextPrimary, fontSize = 12.sp)
+                    Text("Copy", color = Ink, fontSize = 12.sp)
                 }
 
                 OutlinedButton(
@@ -259,16 +256,16 @@ fun DiagnosticsSheet(
                     Icon(
                         imageVector = Icons.Default.DeleteSweep,
                         contentDescription = null,
-                        tint = TextSecondary,
+                        tint = InkDim,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Clear", color = TextSecondary, fontSize = 12.sp)
+                    Text("Clear", color = InkDim, fontSize = 12.sp)
                 }
             }
 
             // Monospace Terminal Console
-            FrostedGlassBox(
+            ObsidianPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -282,7 +279,7 @@ fun DiagnosticsSheet(
                         Text(
                             text = "No log entries recorded yet",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            color = InkDim
                         )
                     }
                 } else {
@@ -309,7 +306,7 @@ private fun StatCard(
     value: String,
     modifier: Modifier = Modifier
 ) {
-    FrostedGlassBox(
+    ObsidianPanel(
         modifier = modifier,
         shape = RoundedCornerShape(10.dp)
     ) {
@@ -317,13 +314,13 @@ private fun StatCard(
             modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(text = label, fontSize = 10.sp, color = TextSecondary)
+            Text(text = label, fontSize = 10.sp, color = InkDim)
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = value,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
-                color = NeonCyan
+                color = Phosphor
             )
         }
     }
@@ -332,12 +329,12 @@ private fun StatCard(
 @Composable
 private fun LogItemRow(entry: LogEntry) {
     val levelColor = when (entry.level) {
-        LogLevel.CRASH -> NeonPink
+        LogLevel.CRASH -> Signal
         LogLevel.ERROR -> Color(0xFFFF5252)
-        LogLevel.WARN -> Color(0xFFFFD740)
-        LogLevel.AUDIO -> NeonCyan
+        LogLevel.WARN -> Ember
+        LogLevel.AUDIO -> Phosphor
         LogLevel.INFO -> Color(0xFF69F0AE)
-        LogLevel.DEBUG -> TextSecondary
+        LogLevel.DEBUG -> InkDim
     }
 
     val timeStr = remember(entry.timestamp) {
@@ -351,14 +348,14 @@ private fun LogItemRow(entry: LogEntry) {
         ) {
             Text(
                 text = timeStr,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = Mono,
                 fontSize = 9.sp,
-                color = TextSecondary.copy(alpha = 0.6f),
+                color = InkDim.copy(alpha = 0.6f),
                 modifier = Modifier.width(66.dp)
             )
             Text(
                 text = "[${entry.level.label.take(1)}]",
-                fontFamily = FontFamily.Monospace,
+                fontFamily = Mono,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 color = levelColor,
@@ -366,9 +363,9 @@ private fun LogItemRow(entry: LogEntry) {
             )
             Text(
                 text = entry.message,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = Mono,
                 fontSize = 10.sp,
-                color = if (entry.level == LogLevel.CRASH || entry.level == LogLevel.ERROR) levelColor else TextPrimary,
+                color = if (entry.level == LogLevel.CRASH || entry.level == LogLevel.ERROR) levelColor else Ink,
                 lineHeight = 14.sp,
                 modifier = Modifier.weight(1f)
             )
@@ -377,9 +374,9 @@ private fun LogItemRow(entry: LogEntry) {
         if (entry.throwableStackTrace != null) {
             Text(
                 text = entry.throwableStackTrace,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = Mono,
                 fontSize = 9.sp,
-                color = NeonPink.copy(alpha = 0.8f),
+                color = Signal.copy(alpha = 0.8f),
                 lineHeight = 12.sp,
                 modifier = Modifier.padding(start = 88.dp, top = 2.dp)
             )
