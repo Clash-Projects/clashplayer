@@ -49,6 +49,7 @@ import com.clashplayer.ui.theme.Ember
 import com.clashplayer.ui.theme.HudStyle
 import com.clashplayer.ui.theme.Ink
 import com.clashplayer.ui.theme.InkMuted
+import com.clashplayer.ui.theme.ObsidianRaised
 import com.clashplayer.ui.theme.rememberArtworkColors
 import java.util.Locale
 
@@ -173,7 +174,7 @@ fun MainAppContainer(
 /** Bottom rail: glyphs at rest; the selected one is lit with its name over an ember notch. */
 @Composable
 internal fun BottomRail(selectedTab: NavTab, onTabSelected: (NavTab) -> Unit, modifier: Modifier = Modifier) {
-    ObsidianPanel(modifier.fillMaxWidth().height(60.dp)) {
+    ObsidianPanel(modifier.fillMaxWidth().height(60.dp), backgroundColor = ObsidianRaised) {
         Row(
             Modifier.fillMaxSize().padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceAround,

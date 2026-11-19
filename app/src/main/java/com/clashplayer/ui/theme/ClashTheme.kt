@@ -17,8 +17,8 @@ import com.clashplayer.R
 // Obsidian: near-black with a cold blue cast; panels are lifted by light, not by colour
 val Obsidian = Color(0xFF06070A)
 val ObsidianRaised = Color(0xFF0D0F14)
-val PanelFill = Color(0xFF0F1117).copy(alpha = 0.78f)
-val PanelFillLight = Color(0xFF181B23).copy(alpha = 0.62f)
+val PanelFill = Color(0xFF0F1117)
+val PanelFillLight = Color(0xFF181B23)
 val EdgeLight = Color.White.copy(alpha = 0.07f)
 val EdgeSpecular = Color.White.copy(alpha = 0.55f)
 

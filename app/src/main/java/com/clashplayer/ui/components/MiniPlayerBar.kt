@@ -44,6 +44,7 @@ import com.clashplayer.ui.theme.Ember
 import com.clashplayer.ui.theme.HudStyle
 import com.clashplayer.ui.theme.Ink
 import com.clashplayer.ui.theme.InkDim
+import com.clashplayer.ui.theme.ObsidianRaised
 import com.clashplayer.ui.theme.Phosphor
 import java.util.Locale
 
@@ -61,7 +62,7 @@ fun MiniPlayerBar(
 ) {
     if (track == null) return
     ObsidianPanel(
-        modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick)
@@ -76,7 +77,8 @@ fun MiniPlayerBar(
                 drawLine(Brush.horizontalGradient(listOf(Color.Transparent, Phosphor), 0f, x.coerceAtLeast(1f)), Offset(0f, 0.75f), Offset(x, 0.75f), 1.5.dp.toPx(), StrokeCap.Round)
                 drawCircle(Phosphor.copy(alpha = 0.35f), 4.dp.toPx(), Offset(x, 0.75f))
                 drawCircle(Phosphor, 1.6.dp.toPx(), Offset(x, 0.75f))
-            }
+            },
+        backgroundColor = ObsidianRaised
     ) {
         Row(Modifier.fillMaxSize().padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(44.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF15171C))) {
