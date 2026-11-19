@@ -152,7 +152,7 @@ fun LibraryScreen(
                 if (library != null) item {
                     Row(horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.padding(top = 8.dp)) {
                         HudButton("+ New playlist", { naming = Triple("New playlist", "") { n: String -> library.createPlaylist(n) } })
-                        HudButton("Import M3U", { pickM3u.launch(arrayOf("audio/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl", "application/x-mpegurl", "text/plain", "*/*")) })
+                        HudButton("Import M3U", { pickM3u.launch(arrayOf("audio/x-mpegurl", "audio/mpegurl", "application/x-mpegurl", "text/plain", "*/*")) })
                     }
                 }
                 if (playlists.isEmpty()) item { Text("No playlists yet.", style = MaterialTheme.typography.bodyLarge, color = InkDim, modifier = Modifier.padding(top = 24.dp)) }
