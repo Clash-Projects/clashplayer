@@ -159,6 +159,7 @@ fun MainAppContainer(
                     onPlayPause = { if (isPlaying) service.pause() else service.resume() },
                     onSkipNext = { service.next() },
                     onClick = { isNowPlayingExpanded = true },
+                    onOpenSignalPath = { isSignalPathExpanded = true },
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
                 BottomRail(selectedTab, { selectedTab = it })

@@ -189,7 +189,9 @@ fun FormatHud(
     Column(modifier) {
         Row(
             Modifier
-                .clickable(remember { MutableInteractionSource() }, indication = null) { open = !open }
+                .clickable(remember { MutableInteractionSource() }, indication = null) {
+                    onOpenSignalPath?.invoke() ?: run { open = !open }
+                }
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -212,7 +214,21 @@ fun FormatHud(
                     Text("BIT·XACT", style = HudStyle.copy(color = Color(0xFFFFD700)))
                 }
             }
-            Text(if (open) "  ▴" else "  ▾", style = HudStyle.copy(color = InkMuted))
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(if (snapshot.bitPerfect) Phosphor.copy(alpha = 0.15f) else Ember.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text("PATH ➔", style = HudStyle.copy(color = if (snapshot.bitPerfect) Phosphor else Ember, fontSize = 9.sp))
+            }
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (open) "▴" else "▾",
+                style = HudStyle.copy(color = InkMuted),
+                modifier = Modifier.clickable { open = !open }.padding(horizontal = 4.dp)
+            )
         }
         AnimatedVisibility(open, enter = expandVertically(spring(0.8f, 380f)) + fadeIn(), exit = shrinkVertically(spring(0.9f, 500f)) + fadeOut()) {
             ClockMonitor(snapshot, Modifier.padding(top = 8.dp), onOpenSignalPath = onOpenSignalPath)

@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.clashplayer.model.Track
@@ -58,7 +59,8 @@ fun MiniPlayerBar(
     onPlayPause: () -> Unit,
     onSkipNext: () -> Unit,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenSignalPath: (() -> Unit)? = null
 ) {
     if (track == null) return
     ObsidianPanel(
@@ -95,10 +97,20 @@ fun MiniPlayerBar(
             Column(Modifier.weight(1f)) {
                 Text(track.title, style = MaterialTheme.typography.titleMedium, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (driverType == AudioDriverType.BIT_PERFECT_DIRECT) "DIRECT  " else "",
-                        style = HudStyle.copy(color = Phosphor)
-                    )
+                    val direct = driverType == AudioDriverType.BIT_PERFECT_DIRECT
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(if (direct) Color(0xFF2E240E) else Phosphor.copy(alpha = 0.15f))
+                            .clickable { onOpenSignalPath?.invoke() ?: onClick() }
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            if (direct) "BIT·XACT" else "PATH",
+                            style = HudStyle.copy(fontSize = 9.sp, color = if (direct) Color(0xFFFFD700) else Phosphor)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
                     Text(track.artist, style = MaterialTheme.typography.bodySmall, color = InkDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
