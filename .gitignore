@@ -1,0 +1,14 @@
+# Gradle / build output
+.gradle/
+.kotlin/
+build/
+app/build/
+.cxx/
+app/.cxx/
+
+# Local machine config
+local.properties
+*.iml
+.idea/
+.DS_Store
+captures/

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ClashPlayer</string>
+    <string name="band_freq">Frequency</string>
+    <string name="f0">Hz</string>
+    <string name="listen_now">Flow</string>
+    <string name="library">Library</string>
+    <string name="equalizer">Audio Lab</string>
+    <string name="visualizer">Visualizer</string>
+    <string name="search">Search</string>
+    <string name="hi_res_audio">Hi-Res Lossless</string>
+    <string name="bit_perfect">Bit-Perfect</string>
+</resources>
