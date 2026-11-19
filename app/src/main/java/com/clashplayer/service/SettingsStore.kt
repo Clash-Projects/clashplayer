@@ -128,9 +128,10 @@ class SettingsStore(context: Context) {
         val BOOLS = listOf(PlaybackSettings::gapless, PlaybackSettings::fades, PlaybackSettings::preventClipping,
             PlaybackSettings::ignoreShortFocusLoss, PlaybackSettings::pauseInsteadOfDuck, PlaybackSettings::usbResample,
             PlaybackSettings::preferNativeDsd, PlaybackSettings::dsdRemaster, PlaybackSettings::remasterAllow48k,
-            PlaybackSettings::noDvcOnBluetooth)
+            PlaybackSettings::noDvcOnBluetooth, PlaybackSettings::autoMixEnabled, PlaybackSettings::autoMixTempoMatch)
         val INTS = listOf(PlaybackSettings::crossfadeMs, PlaybackSettings::fadeMs, PlaybackSettings::seekFadeMs,
-            PlaybackSettings::silenceMs, PlaybackSettings::usbWarmupMs, PlaybackSettings::remasterMultiple, PlaybackSettings::btCodecRate)
+            PlaybackSettings::silenceMs, PlaybackSettings::usbWarmupMs, PlaybackSettings::remasterMultiple, PlaybackSettings::btCodecRate,
+            PlaybackSettings::autoMixBars)
         val FLOATS = listOf(PlaybackSettings::replayGainPreampDb, PlaybackSettings::untaggedGainDb, PlaybackSettings::remasterGainDb)
     }
 }

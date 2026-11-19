@@ -275,7 +275,7 @@ private fun ToneAndSpaceTab(
 
                     TickSelector(
                         options = listOf("Reference", "Speaker", "Headphone", "DAC"),
-                        selectedIndex = clarityPresetIdx,
+                        selected = clarityPresetIdx,
                         onSelect = {
                             clarityPresetIdx = it
                             audioEngine.setClarityPreset(it)

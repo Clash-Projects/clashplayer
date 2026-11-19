@@ -18,6 +18,16 @@ add_library(
     DspProcessor.cpp
     ParametricEq.cpp
     ClarityBridge.cpp
+    automix/AutoMixJniBridge.cpp
+    automix/LinkwitzRileyCrossover.cpp
+    automix/LufsContourNormalizer.cpp
+    automix/TransientPreservingStretcher.cpp
+)
+target_include_directories(
+    nativeout
+    PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/automix"
 )
 target_compile_options(nativeout PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
 # Android 28+ AAudio calls are weakly linked and guarded by __builtin_available

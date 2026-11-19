@@ -39,4 +39,10 @@ class PlaybackSettings {
     @Volatile var noDvcOnBluetooth = true
     /** Bluetooth codec rate to request: 0 leaves it alone, -1 follows the track, else the rate in Hz. */
     @Volatile var btCodecRate = 0
+    /** Beat-aware DJ AutoMix with spectral crossover and tempo matching. */
+    @Volatile var autoMixEnabled = true
+    /** DJ AutoMix transition length: 8 or 16 bars. */
+    @Volatile var autoMixBars = 8
+    /** AutoMix tempo matching (within ±8%). */
+    @Volatile var autoMixTempoMatch = true
 }

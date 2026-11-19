@@ -220,7 +220,7 @@ class ClarityProcessor(
         return false
     }
 
-    inline fun process(left: Float, right: Float, output: FloatArray) {
+    fun process(left: Float, right: Float, output: FloatArray) {
         // One-pole DC Blocker (10 Hz)
         val dcLeft = left.toDouble()
         val dcOutLeft = dcLeft - dcXPrev0 + dcBlockerR * dcYPrev0

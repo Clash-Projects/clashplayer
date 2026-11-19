@@ -52,6 +52,11 @@ internal fun EngineTab(audioEngine: AudioEngine, settings: PlaybackSettings, onR
             ObsidianPanel(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Toggle("Gapless", "Same-format tracks run on without reopening the output, so nothing is lost between them.", settings.gapless) { settings.gapless = it }
+                    Toggle("DJ AutoMix", "Beat-aware mixing: downbeat phase-locking, sub-bass swap and Linkwitz-Riley spectral crossover.", settings.autoMixEnabled) { settings.autoMixEnabled = it }
+                    if (settings.autoMixEnabled) {
+                        Ticks("AutoMix Bars", "Transition length in musical bars.", listOf(8, 16), settings.autoMixBars, { "$it bars" }) { settings.autoMixBars = it }
+                        Toggle("AutoMix Tempo Match", "Slightly re-time incoming tempo (within ±8%) to match outgoing groove.", settings.autoMixTempoMatch) { settings.autoMixTempoMatch = it }
+                    }
                     Ticks("Crossfade", "Mixed under the next track when the rates match. Off for bit-perfect output.",
                         listOf(0, 2000, 4000, 6000, 10000), settings.crossfadeMs, { if (it == 0) "Off" else "${it / 1000}s" }) { settings.crossfadeMs = it }
                     Toggle("Fade play and pause", "Short ramps instead of hard starts and stops, plus a fade-in after seeking.", settings.fades) { settings.fades = it }
