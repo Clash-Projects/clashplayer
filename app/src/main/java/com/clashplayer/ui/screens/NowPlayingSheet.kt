@@ -193,7 +193,7 @@ fun NowPlayingSheet(
                                 val drag = (offset.value / height).coerceIn(0f, 1f)
                                 val s = (1f - 0.72f * m) * (1f - 0.1f * drag)
                                 scaleX = s; scaleY = s
-                                transformOrigin = TransformOrigin(0f, 0.5f - 0.5f * m)
+                                transformOrigin = TransformOrigin(0.5f, 0.5f - 0.5f * m)
                                 alpha = 1f - 0.15f * m
                             }
                     )

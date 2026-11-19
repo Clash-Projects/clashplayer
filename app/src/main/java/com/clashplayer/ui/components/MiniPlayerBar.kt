@@ -106,7 +106,7 @@ fun MiniPlayerBar(
                             .padding(horizontal = 4.dp, vertical = 1.dp)
                     ) {
                         Text(
-                            if (direct) "BIT·XACT" else "PATH",
+                            if (direct) "BIT·PERFECT" else "PATH",
                             style = HudStyle.copy(fontSize = 9.sp, color = if (direct) Color(0xFFFFD700) else Phosphor)
                         )
                     }

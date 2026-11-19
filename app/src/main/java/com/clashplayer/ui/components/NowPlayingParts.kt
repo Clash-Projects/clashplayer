@@ -2,6 +2,7 @@ package com.clashplayer.ui.components
 
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -73,105 +74,127 @@ import kotlin.math.exp
 import kotlin.math.min
 
 /**
- * Album art laid over a laser-disc platter that peeks out from behind it. The platter spins up and down like a
- * turntable (no instant start/stop); its edge reflection is a separate layer that stays put while it turns.
+ * Clean, modern square cover artwork with ambient depth lighting, smooth rounded corners,
+ * and high-fidelity elevation. No spinning CD platters or artificial turntable discs.
  */
 @Composable
 fun DiscArtwork(artwork: Uri?, colors: AuroraColors, title: String, isPlaying: Boolean, modifier: Modifier = Modifier) {
-    val angle = remember { mutableFloatStateOf(0f) }
-    val playing by rememberUpdatedState(isPlaying)
-    LaunchedEffect(Unit) {
-        var speed = 0f
-        var last = 0L
-        while (true) withFrameNanos { now ->
-            val dt = if (last == 0L) 0f else ((now - last) / 1e9f).coerceAtMost(0.05f)
-            last = now
-            val target = if (playing) 200f else 0f // 33⅓ rpm in degrees per second
-            speed += (target - speed) * (1 - exp(-(if (playing) 2.2f else 1.1f) * dt))
-            angle.floatValue = (angle.floatValue + speed * dt) % 360f
-        }
-    }
-    BoxWithConstraints(modifier, contentAlignment = Alignment.CenterStart) {
-        val art = min(maxWidth.value / 1.2f, maxHeight.value).dp
-        val disc = art * 0.94f
-        Box(Modifier.size(art * 1.2f, art)) {
-            // Platter
-            Box(
-                Modifier
-                    .size(disc)
-                    .align(Alignment.CenterEnd)
-                    .graphicsLayer { rotationZ = angle.floatValue }
-                    .drawBehind { drawPlatter(colors) }
-            )
-            // Fixed reflection across the platter's exposed edge
-            Box(
-                Modifier
-                    .size(disc)
-                    .align(Alignment.CenterEnd)
-                    .drawBehind {
-                        val r = size.minDimension / 2
-                        drawArc(
-                            Brush.sweepGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.5f), Color.Transparent, Color.Transparent), center),
-                            -70f, 80f, false, style = Stroke(r * 0.05f), topLeft = Offset(r * 0.03f, r * 0.03f),
-                            size = androidx.compose.ui.geometry.Size(r * 1.94f, r * 1.94f)
+    val playScale by animateFloatAsState(
+        targetValue = if (isPlaying) 1.0f else 0.94f,
+        animationSpec = spring(dampingRatio = 0.75f, stiffness = 300f),
+        label = "playScale"
+    )
+
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        val size = min(maxWidth.value, maxHeight.value).dp
+        val cornerRadius = 18.dp
+
+        Box(
+            Modifier
+                .size(size)
+                .graphicsLayer {
+                    scaleX = playScale
+                    scaleY = playScale
+                }
+                // Ambient colorful glow behind the artwork
+                .drawBehind {
+                    val cr = cornerRadius.toPx()
+                    drawRoundRect(
+                        color = colors.dominant.copy(alpha = 0.28f),
+                        topLeft = Offset(0f, 16.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(this.size.width, this.size.height),
+                        cornerRadius = CornerRadius(cr + 4f, cr + 4f)
+                    )
+                    // Deep elevation drop shadow
+                    for (i in 1..4) {
+                        drawRoundRect(
+                            color = Color.Black.copy(alpha = 0.20f),
+                            topLeft = Offset(0f, i * 3f),
+                            size = androidx.compose.ui.geometry.Size(this.size.width, this.size.height),
+                            cornerRadius = CornerRadius(cr, cr)
                         )
                     }
-            )
-            // Sleeve: the artwork with a cast shadow and a top-edge specular line
-            Box(
-                Modifier
-                    .size(art)
-                    .align(Alignment.CenterStart)
-                    .drawBehind {
-                        for (i in 1..6) drawRoundRect(Color.Black.copy(alpha = 0.10f), Offset(i * 2f, i * 3f), size,
-                            androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()))
-                    }
-                    .clip(RoundedCornerShape(8.dp))
-                    .drawWithContent {
-                        drawContent()
-                        drawLine(Brush.horizontalGradient(listOf(Color.White.copy(alpha = 0.5f), Color.Transparent)), Offset.Zero, Offset(size.width, 0f), 1.5f)
-                        drawRect(Brush.linearGradient(listOf(Color.White.copy(alpha = 0.08f), Color.Transparent), Offset.Zero, Offset(size.width * 0.5f, size.height * 0.5f)))
-                    }
-            ) {
-                if (artwork != null) {
-                    AsyncImage(
-                        ImageRequest.Builder(LocalContext.current).data(artwork).crossfade(true).build(), title,
-                        contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                }
+                .clip(RoundedCornerShape(cornerRadius))
+                .background(Color(0xFF0F1117))
+                .drawWithContent {
+                    drawContent()
+                    // Refined top-edge specular glass rim
+                    drawLine(
+                        Brush.horizontalGradient(
+                            listOf(
+                                Color.White.copy(alpha = 0.40f),
+                                Color.White.copy(alpha = 0.08f),
+                                Color.Transparent
+                            )
+                        ),
+                        Offset.Zero,
+                        Offset(this.size.width, 0f),
+                        1.5.dp.toPx()
                     )
-                } else {
-                    Box(
-                        Modifier.fillMaxSize().background(Brush.linearGradient(listOf(colors.dominant.copy(alpha = 0.55f), colors.tertiary, Color(0xFF0B0C10)))),
-                        contentAlignment = Alignment.BottomStart
+                    // Subtle perimeter border
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.08f),
+                        topLeft = Offset.Zero,
+                        size = this.size,
+                        cornerRadius = CornerRadius(cornerRadius.toPx()),
+                        style = Stroke(1.dp.toPx())
+                    )
+                }
+        ) {
+            if (artwork != null) {
+                AsyncImage(
+                    ImageRequest.Builder(LocalContext.current)
+                        .data(artwork)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    colors.dominant.copy(alpha = 0.65f),
+                                    colors.tertiary.copy(alpha = 0.45f),
+                                    Color(0xFF090A0E)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Text(title.take(2).uppercase(), style = HudStyle.copy(fontSize = 54.sp, fontWeight = FontWeight(800), color = Ink.copy(alpha = 0.85f)),
-                            modifier = Modifier.padding(16.dp))
+                        Text(
+                            title.take(2).uppercase(Locale.US),
+                            style = HudStyle.copy(
+                                fontSize = 48.sp,
+                                fontWeight = FontWeight(800),
+                                color = Ink.copy(alpha = 0.9f)
+                            )
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "HI-RES LOSSLESS",
+                            style = HudStyle.copy(
+                                fontSize = 10.sp,
+                                color = Phosphor.copy(alpha = 0.8f)
+                            )
+                        )
                     }
                 }
             }
         }
     }
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPlatter(colors: AuroraColors) {
-    val r = size.minDimension / 2
-    val c = center
-    drawCircle(Color(0xFF07080B), r, c)
-    // Iridescent data layer: a faint spectral sweep that turns with the disc
-    drawCircle(
-        Brush.sweepGradient(listOf(Phosphor, Color(0xFF6A7CFF), Ember, Color(0xFFE5FF7A), Phosphor).map { it.copy(alpha = 0.30f) }, c),
-        r * 0.97f, c
-    )
-    var rr = r * 0.96f
-    var k = 0
-    while (rr > r * 0.36f) {
-        drawCircle(Color.Black.copy(alpha = if (k % 3 == 0) 0.35f else 0.15f), rr, c, style = Stroke(0.8f))
-        rr -= 2.2f; k++
-    }
-    drawCircle(Color.White.copy(alpha = 0.22f), r * 0.985f, c, style = Stroke(1.5f))
-    // Label and spindle
-    drawCircle(Brush.radialGradient(listOf(colors.dominant, colors.tertiary), c, r * 0.32f), r * 0.32f, c)
-    drawLine(Color.Black.copy(alpha = 0.25f), Offset(c.x - r * 0.3f, c.y), Offset(c.x - r * 0.12f, c.y), 2f, StrokeCap.Round)
-    drawCircle(Color(0xFF07080B), r * 0.035f, c)
 }
 
 /**
@@ -211,7 +234,7 @@ fun FormatHud(
                         .background(Color(0xFF2E240E))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Text("BIT·XACT", style = HudStyle.copy(color = Color(0xFFFFD700)))
+                    Text("BIT·PERFECT", style = HudStyle.copy(color = Color(0xFFFFD700)))
                 }
             }
             Spacer(Modifier.width(8.dp))

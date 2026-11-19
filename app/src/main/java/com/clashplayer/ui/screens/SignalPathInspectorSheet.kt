@@ -112,7 +112,7 @@ fun SignalPathInspectorSheet(
                             )
                         }
                         Text(
-                            if (clock.bitPerfect) "BIT-XACT DIRECT (LOSSLESS)" else "DSP ENHANCED (STUDIO PROCESSING)",
+                            if (clock.bitPerfect) "BIT-PERFECT DIRECT (LOSSLESS)" else "DSP ENHANCED (STUDIO PROCESSING)",
                             style = MaterialTheme.typography.bodySmall.copy(color = if (clock.bitPerfect) Phosphor else Ember)
                         )
                     }
@@ -243,18 +243,18 @@ fun SignalPathInspectorSheet(
                         )
                     )
 
-                    PathArrow(label = if (clock.bitPerfect) "Bit-Xact Bypassed" else "DSP Processing Pipeline")
+                    PathArrow(label = if (clock.bitPerfect) "Bit-Perfect Bypassed" else "DSP Processing Pipeline")
 
                     // STAGE 4: DSP & SPATIAL CHAIN
                     val isDspActive = !clock.bitPerfect
                     SignalStageCard(
                         stageNumber = 4,
                         stageTitle = "DSP & SPATIAL PROCESSING",
-                        statusText = if (clock.bitPerfect) "BIT-XACT BYPASSED" else "ACTIVE ENHANCEMENT",
+                        statusText = if (clock.bitPerfect) "BIT-PERFECT BYPASSED" else "ACTIVE ENHANCEMENT",
                         isLossless = clock.bitPerfect,
                         details = buildList {
                             if (clock.bitPerfect) {
-                                add("Bit Xact Mode" to "All software EQ, volume and filters bypassed")
+                                add("Bit-Perfect Mode" to "All software EQ, volume and filters bypassed")
                                 add("Digital Ceiling" to "Bit-Exact 1:1 Sample Pass-through")
                             } else {
                                 if (audioEngine.binauralSpatializer.enabled) {

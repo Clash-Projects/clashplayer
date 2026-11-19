@@ -133,7 +133,7 @@ internal fun EngineTab(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Ticks("Dither", "Used when samples are changed on the way to an integer output (resampling, software volume). F- and E-weighted apply at 44.1 and 48 kHz; Shibata types are designed for any rate.",
                         DitherType.entries, audioEngine.ditherer.type, { it.label }) { audioEngine.ditherer.type = it }
-                    Toggle("Bit Xact USB Direct", "Pure 1:1 bit-exact streaming to USB DAC. Bypasses software mixers and filters for uncompromising bit-exact transmission.", settings.bitXactMode) {
+                    Toggle("Bit-Perfect USB Direct", "Pure 1:1 bit-perfect streaming to USB DAC. Bypasses software mixers and filters for uncompromising bit-perfect transmission.", settings.bitXactMode) {
                         settings.bitXactMode = it
                     }
                     Toggle("-3 dB Inter-Sample Headroom", "Leaves +3 dB true-peak headroom margin to prevent DAC reconstruction filters from clipping on hot commercial masters.", settings.interSampleHeadroom) {
